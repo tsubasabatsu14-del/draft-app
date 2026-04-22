@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ドラフト会議</title>
+<script src="https://unpkg.com/@supabase/supabase-js@2"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: sans-serif; background: #f5f5f5; padding: 16px; }
+  .wrap { max-width: 480px; margin: 0 auto; }
+  h1 { font-size: 22px; font-weight: 500; margin-bottom: 8px; color: #111; }
+  p.sub { font-size: 14px; color: #666; margin-bottom: 24px; }
+  .card { background: #fff; border: 1px solid #e5e5e5; border-radius: 12px; padding: 20px; margin-bottom: 16px; }
+  label { display: block; font-size: 13px; color: #666; margin-bottom: 6px; }
+  input { display: block; width: 100%; padding: 10px 12px; border: 1px solid #ddd; border-radius: 8px; font-size: 15px; margin-bottom: 12px; }
+  .btn { display: inline-block; padding: 10px 24px; border-radius: 8px; font-size: 14px; cursor: pointer; border: 1px solid #ddd; background: #fff; color: #111; margin-right: 8px; }
+  .btn-primary { background: #378ADD; color: #fff; border: none; font-weight: 500; }
+  .btn-sm { padding: 6px 16px; font-size: 13px; }
+  .error { color: #e24b4a; font-size: 13px; margin-bottom: 8px; }
+  .player-row { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px solid #f0f0f0; }
+  .avatar { width: 32px; height: 32px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: 500; font-size: 13px; flex-shrink: 0; }
+  .badge { display: inline-block; border-radius: 6px; padding: 3px 10px; font-size: 12px; font-weight: 500; }
+  .badge-ok { background: #e1f5ee; color: #0f6e56; }
+  .badge-ng { background: #faece7; color: #993c1d; }
+  .badge-lottery { background: #faeeda; color: #633806; }
+  .code-big { font-size: 28px; font-weight: 500; letter-spacing: 4px; color: #111; }
+  .confirmed-tag { display: inline-block; background: #f0f0f0; border-radius: 6px; padding: 2px 10px; font-size: 12px; margin: 2px; }
+  .final-card { background: #fff; border-radius: 12px; border: 1px solid #e5e5e5; padding: 16px; margin-bottom: 12px; }
+  .pick-name { font-size: 15px; color: #444; }
+  .waiting { font-size: 13px; color: #888; margin-top: 8px; }
+  .avatar-colors { --c0: #E6F1FB; --t0: #185FA5; --c1: #E1F5EE; --t1: #0F6E56; --c2: #FAECE7; --t2: #993C1D; --c3: #F5E6FB; --t3: #7B2FA8; }
+</style>
+</head>
+<body class="avatar-colors">
+<div class="wrap" id="app"></div>
+<script>
+const SUPABASE_URL = 'https://wfffsmlwfjkckvymjhnb.supabase.co';
+const SUPABASE_KEY = 'sb_publishable_gSaKZm1uejeqlV62aN9J6Q_jBk08Vv5';
+const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+const COLORS = ['#E6F1FB','#E1F5EE','#FAECE7','#F5E6FB'];
+const TEXT_COLORS = ['#185FA5','#0F6E56','#993C1D','#7B2FA8'];
+
+let state = { screen: 'top', room: null, myIndex: null, submitted: false, roundResult: null };
+
+function avatar(name, i) {
+  return `<div class="avatar" style="background:${COLORS[i%4]};color:${TEXT_COLORS[i%4]}">${name[0]}</div>`;
+}
+
+function shuffle(arr) {
+  const a = [...arr];
+  for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]];}
+  return a;
+}
+
+function genCode() { return Math.random().toString(36).substring(2,6).toUpperCase(); }
+
+async function getRoom(code) {
+  const {data} = await sb.from('rooms').select('*').eq('code', code).single();
+  return data;
+}
+
+async function saveRoom(room) {
+  await sb.from('rooms').upsert(room);
+}
+
+function render() {
+  const app = document.getElementById('app');
+  const s = state;
+  if(s.screen === 'top') {
+    app.innerHTML = `
+      <h1 style="margin-top:32px">ドラフト会議</h1>
+      <p class="sub">最大4名・最大20巡のドラフトを開催しよう</p>
+      <button class="btn btn-primary" onclick="goCreate()">ルームを作る</button>
+      <button class="btn" onclick="goJoin()">ルームに参加する</button>`;
+  } else if(s.screen === 'create') {
+    app.innerHTML = `
+      <h1 style="margin-top:32px">ルームを作る</h1>
+      <div class="card" style="margin-top:16px">
+        <label>あなたの名前</label>
+        <input id="cname" maxlength="20" placeholder="例: 田中">
+        <button class="btn btn-primary" onclick="createRoom()">作成する</button>
+      </div>
+      <button class="btn btn-sm" style="margin-top:4px" onclick="goTop()">← 戻る</button>`;
+  } else if(s.screen === 'join') {
+    app.innerHTML = `
+      <h1 style="margin-top:32px">ルームに参加する</h1>
+      <div class="card" style="margin-top:16px">
+        <label>ルームコード（4桁）</label>
+        <input id="jcode" maxlength="4" placeholder="例: AB3X" style="text-transform:uppercase">
+        <label>あなたの名前</label>
+        <input id="jname" maxlength="20" placeholder="例: 鈴木">
+        <button class="btn btn-primary" onclick="joinRoom()">参加する</button>
+      </div>
+      <button class="btn btn-sm" style="margin-top:4px" onclick="goTop()">← 戻る</button>`;
+  } else if(s.screen === 'lobby') {
+    const r = s.room;
+    app.innerHTML = `
+      <h1 style="margin-top:32px">ロビー</h1>
+      <div class="card" style="margin-top:16px">
+        <label>ルームコード（友人に共有してください）</label>
+        <div class="code-big">${r.code}</div>
+        <div style="margin-top:16px">
+          ${r.players.map((p,i)=>`
+            <div class="player-row">
+              ${avatar(p.name,i)}
+              <span style="font-size:14px">${p.name}</span>
+              ${i===s.myIndex?'<span style="font-size:12px;color:#888">（あなた）</span>':''}
+            </div>`).join('')}
+        </div>
+        <div style="margin-top:8px;font-size:13px;color:#888">${r.players.length}/4名 参加中</div>
+      </div>
+      ${s.myIndex===0 ? `<button class="btn btn-primary" onclick="startGame()">ゲームを開始する</button>` : '<p class="waiting">主催者がゲームを開始するまでお待ちください…</p>'}
+      <br><button class="btn btn-sm" style="margin-top:12px" onclick="refreshLobby()">🔄 更新</button>`;
+  } else if(s.screen === 'pick') {
+    const r = s.room;
+    const cnt = Object.keys(r.current_picks||{}).length;
+    app.innerHTML = `
+      <h1 style="margin-top:32px">${r.round}巡目</h1>
+      <div style="font-size:13px;color:#888;margin-bottom:16px">${cnt}/${r.players.length}名 入力済み</div>
+      ${!s.submitted ? `
+        <div class="card">
+          <label>指名する選手名を入力してください</label>
+          <input id="pick" maxlength="30" placeholder="選手名">
+          <div id="pick-err" class="error"></div>
+          <button class="btn btn-primary" onclick="submitPick()">指名する</button>
+        </div>` : `
+        <div class="card">
+          <p style="color:#666;font-size:15px">指名を送信しました</p>
+          <p class="waiting">他の参加者の入力を待っています…</p>
+          <button class="btn btn-sm" style="margin-top:12px" onclick="pollResult()">🔄 更新</button>
+        </div>`}
+      ${r.all_confirmed&&r.all_confirmed.length>0 ? `
+        <div class="card">
+          <div style="font-size:13px;color:#888;margin-bottom:8px">確定済み選手（指名不可）</div>
+          <div>${r.all_confirmed.map(n=>`<span class="confirmed-tag">${n}</span>`).join('')}</div>
+        </div>` : ''}`;
+  } else if(s.screen === 'result') {
+    const r = s.room;
+    const rr = s.roundResult;
+    app.innerHTML = `
+      <h1 style="margin-top:32px">${rr.round}巡目 結果発表</h1>
+      <div class="card" style="margin-top:16px">
+        ${r.players.map((p,i)=>{
+          const pick = (r.current_picks||{})[String(i)];
+          const isWinner = pick && rr.uniqueWinners[i]===pick;
+          const isDup = pick && rr.duplicateGroups[pick];
+          return `<div class="player-row" style="padding:10px 0">
+            ${avatar(p.name,i)}
+            <div style="flex:1">
+              <div style="font-size:14px;font-weight:500">${p.name}</div>
+              <div class="pick-name">${pick||'—'}</div>
+            </div>
+            ${pick ? (isWinner
+              ? `<span class="badge badge-ok">${isDup?'🎲 当確（抽選）':'✓ 当確'}</span>`
+              : isDup ? `<span class="badge badge-ng">被り → ハズレ</span>` : '') : ''}
+          </div>`;
+        }).join('')}
+      </div>
+      ${Object.keys(rr.duplicateGroups).length>0 ? `
+        <div class="card" style="background:#faeeda;border-color:#ef9f27">
+          ${Object.entries(rr.duplicateGroups).map(([name,who])=>`
+            <div style="font-size:13px;color:#633806">
+              「${name}」で${who.map(i=>r.players[i]?.name).join('・')}が被り → ${r.players[rr.winners[name]]?.name}が当確（抽選）
+            </div>`).join('')}
+        </div>` : ''}
+      ${s.myIndex===0
+        ? `<button class="btn btn-primary" onclick="nextRound()">${r.round>=r.max_rounds?'最終結果を見る':`${r.round+1}巡目へ`}</button>`
+        : '<p class="waiting">主催者が次の巡を開始するまでお待ちください…</p>'}
+      <br><button class="btn btn-sm" style="margin-top:12px" onclick="pollNext()">🔄 更新</button>`;
+  } else if(s.screen === 'final') {
+    const r = s.room;
+    app.innerHTML = `
+      <h1 style="margin-top:32px">最終結果</h1>
+      ${r.players.map((p,i)=>`
+        <div class="final-card" style="border-top:3px solid ${TEXT_COLORS[i%4]}">
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">
+            ${avatar(p.name,i)}
+            <span style="font-weight:500">${p.name}</span>
+            <span style="margin-left:auto;font-size:13px;color:#888">${p.confirmed.length}名</span>
+          </div>
+          ${p.confirmed.length===0
+            ? '<div style="font-size:13px;color:#888">指名なし</div>'
+            : p.confirmed.map((n,j)=>`<div style="font-size:13px;padding:4px 0;border-bottom:1px solid #f0f0f0">${j+1}. ${n}</div>`).join('')}
+        </div>`).join('')}
+      <button class="btn" style="margin-top:8px" onclick="goTop()">トップへ戻る</button>`;
+  }
+}
+
+function goTop() { state = { screen:'top', room:null, myIndex:null, submitted:false, roundResult:null }; render(); }
+function goCreate() { state.screen='create'; render(); }
+function goJoin() { state.screen='join'; render(); }
+
+async function createRoom() {
+  const name = document.getElementById('cname').value.trim();
+  if(!name) return;
+  const code = genCode();
+  const room = { code, round:1, max_rounds:20, phase:'lobby', players:[{name,confirmed:[]}], current_picks:{}, all_confirmed:[] };
+  await saveRoom(room);
+  state.room = room; state.myIndex = 0; state.screen = 'lobby'; render();
+}
+
+async function joinRoom() {
+  const code = document.getElementById('jcode').value.trim().toUpperCase();
+  const name = document.getElementById('jname').value.trim();
+  if(!code||!name) return;
+  const r = await getRoom(code);
+  if(!r) { alert('ルームが見つかりません'); return; }
+  if(r.players.length>=4) { alert('満員です'); return; }
+  if(r.phase!=='lobby') { alert('既にゲームが始まっています'); return; }
+  const idx = r.players.length;
+  r.players.push({name, confirmed:[]});
+  await saveRoom(r);
+  state.room = r; state.myIndex = idx; state.screen = 'lobby'; render();
+}
+
+async function startGame() {
+  const r = await getRoom(state.room.code);
+  if(r.players.length<2) { alert('2名以上必要です'); return; }
+  r.phase = 'picking';
+  await saveRoom(r);
+  state.room = r; state.screen = 'pick'; state.submitted = false; render();
+}
+
+async function refreshLobby() {
+  const r = await getRoom(state.room.code);
+  state.room = r;
+  if(r.phase==='picking') { state.screen='pick'; state.submitted=false; }
+  render();
+}
+
+async function submitPick() {
+  const val = document.getElementById('pick').value.trim();
+  if(!val) { document.getElementById('pick-err').textContent='名前を入力してください'; return; }
+  const r = await getRoom(state.room.code);
+  if((r.all_confirmed||[]).includes(val)) { document.getElementById('pick-err').textContent=`「${val}」は既に確定済みです`; return; }
+  const picks = r.current_picks || {};
+  picks[String(state.myIndex)] = val;
+  r.current_picks = picks;
+  if(Object.keys(picks).length === r.players.length) { r.phase = 'result'; }
+  await saveRoom(r);
+  state.room = r; state.submitted = true;
+  if(r.phase==='result') { buildResult(r); state.screen='result'; }
+  render();
+}
+
+async function pollResult() {
+  const r = await getRoom(state.room.code);
+  state.room = r;
+  if(r.phase==='result') { buildResult(r); state.screen='result'; }
+  render();
+}
+
+function buildResult(r) {
+  const picks = r.current_picks || {};
+  const allPicks = Object.values(picks);
+  const duplicateGroups = {};
+  allPicks.forEach(p => {
+    const who = Object.entries(picks).filter(([,v])=>v===p).map(([k])=>parseInt(k));
+    if(who.length>1) duplicateGroups[p]=who;
+  });
+  const winners = {};
+  Object.entries(duplicateGroups).forEach(([name,who])=>{ winners[name]=shuffle(who)[0]; });
+  const uniqueWinners = {};
+  Object.entries(picks).forEach(([i,pick])=>{
+    const pi=parseInt(i);
+    if(!duplicateGroups[pick]) uniqueWinners[pi]=pick;
+    else if(winners[pick]===pi) uniqueWinners[pi]=pick;
+  });
+  state.roundResult = { round:r.round, duplicateGroups, winners, uniqueWinners };
+}
+
+async function nextRound() {
+  const r = await getRoom(state.room.code);
+  const picks = r.current_picks || {};
+  const rr = state.roundResult;
+  r.players = r.players.map((p,i)=>{
+    const pick = picks[String(i)];
+    if(!pick) return p;
+    if(rr.uniqueWinners[i]===pick) {
+      if(!(r.all_confirmed||[]).includes(pick)) r.all_confirmed.push(pick);
+      return {...p, confirmed:[...(p.confirmed||[]),pick]};
+    }
+    return p;
+  });
+  r.current_picks = {};
+  r.round = r.round + 1;
+  if(r.round > r.max_rounds) { r.phase='final'; }
+  else { r.phase='picking'; }
+  await saveRoom(r);
+  state.room = r; state.submitted = false; state.roundResult = null;
+  state.screen = r.phase==='final' ? 'final' : 'pick';
+  render();
+}
+
+async function pollNext() {
+  const r = await getRoom(state.room.code);
+  state.room = r;
+  if(r.phase==='picking') { state.submitted=false; state.roundResult=null; state.screen='pick'; }
+  else if(r.phase==='final') { state.screen='final'; }
+  render();
+}
+
+render();
+</script>
+</body>
+</html>
