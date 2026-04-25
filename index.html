@@ -23,7 +23,7 @@
   .badge { display: inline-block; border-radius: 6px; padding: 3px 10px; font-size: 12px; font-weight: 500; }
   .badge-ok { background: #e1f5ee; color: #0f6e56; }
   .badge-ng { background: #faece7; color: #993c1d; }
-  .badge-lottery { background: #faeeda; color: #633806; }
+  .badge-redo { background: #faeeda; color: #633806; }
   .code-big { font-size: 28px; font-weight: 500; letter-spacing: 4px; color: #111; }
   .confirmed-tag { display: inline-block; background: #f0f0f0; border-radius: 6px; padding: 2px 10px; font-size: 12px; margin: 2px; }
   .final-card { background: #fff; border-radius: 12px; border: 1px solid #e5e5e5; padding: 16px; margin-bottom: 12px; }
@@ -41,6 +41,27 @@ const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
 const COLORS = ['#E6F1FB','#E1F5EE','#FAECE7','#F5E6FB'];
 const TEXT_COLORS = ['#185FA5','#0F6E56','#993C1D','#7B2FA8'];
+
+// ① URLからルームコードと自分のインデックスを復元
+function loadStateFromURL() {
+  const params = new URLSearchParams(window.location.search);
+  const code = params.get('code');
+  const myIndex = params.get('me');
+  return { code, myIndex: myIndex !== null ? parseInt(myIndex) : null };
+}
+
+// ① URLにルームコードと自分のインデックスを保存
+function saveStateToURL(code, myIndex) {
+  const params = new URLSearchParams();
+  params.set('code', code);
+  if (myIndex !== null) params.set('me', myIndex);
+  const newURL = window.location.pathname + '?' + params.toString();
+  window.history.replaceState({}, '', newURL);
+}
+
+function clearURL() {
+  window.history.replaceState({}, '', window.location.pathname);
+}
 
 let state = { screen: 'top', room: null, myIndex: null, submitted: false, roundResult: null };
 
@@ -63,6 +84,21 @@ async function getRoom(code) {
 
 async function saveRoom(room) {
   await sb.from('rooms').upsert(room);
+}
+
+// ② 被った人のリストを返すヘルパー
+function getDuplicatePlayers(picks) {
+  const duplicates = new Set();
+  const seen = {};
+  Object.entries(picks).forEach(([i, name]) => {
+    if (seen[name] !== undefined) {
+      duplicates.add(parseInt(seen[name]));
+      duplicates.add(parseInt(i));
+    } else {
+      seen[name] = i;
+    }
+  });
+  return [...duplicates];
 }
 
 function render() {
@@ -115,20 +151,46 @@ function render() {
       <br><button class="btn btn-sm" style="margin-top:12px" onclick="refreshLobby()">🔄 更新</button>`;
   } else if(s.screen === 'pick') {
     const r = s.room;
+    // ② 被りやり直しの場合、自分がやり直し対象かチェック
+    const redoPlayers = r.redo_players || [];
+    const isRedo = redoPlayers.length > 0;
+    const myTurnInRedo = redoPlayers.includes(s.myIndex);
     const cnt = Object.keys(r.current_picks||{}).length;
+
+    let instruction = '';
+    if (isRedo) {
+      const redoNames = redoPlayers.map(i => r.players[i]?.name).join('・');
+      if (myTurnInRedo) {
+        instruction = `<div class="card" style="background:#faeeda;border-color:#ef9f27;margin-bottom:12px">
+          <div style="font-size:13px;color:#633806">⚠️ 「${r.redo_name}」で被りが発生しました。あなたはやり直しです。別の選手を指名してください。</div>
+        </div>`;
+      } else {
+        instruction = `<div class="card" style="background:#faeeda;border-color:#ef9f27;margin-bottom:12px">
+          <div style="font-size:13px;color:#633806">⚠️ ${redoNames} がやり直し中です。お待ちください。</div>
+        </div>`;
+      }
+    }
+
+    const canPick = !isRedo || myTurnInRedo;
+
     app.innerHTML = `
-      <h1 style="margin-top:32px">${r.round}巡目</h1>
-      <div style="font-size:13px;color:#888;margin-bottom:16px">${cnt}/${r.players.length}名 入力済み</div>
-      ${!s.submitted ? `
+      <h1 style="margin-top:32px">${r.round}巡目${isRedo?' (やり直し)':''}</h1>
+      <div style="font-size:13px;color:#888;margin-bottom:16px">${cnt}/${isRedo ? redoPlayers.length : r.players.length}名 入力済み</div>
+      ${instruction}
+      ${canPick && !s.submitted ? `
         <div class="card">
           <label>指名する選手名を入力してください</label>
           <input id="pick" maxlength="30" placeholder="選手名">
           <div id="pick-err" class="error"></div>
           <button class="btn btn-primary" onclick="submitPick()">指名する</button>
-        </div>` : `
+        </div>` : canPick && s.submitted ? `
         <div class="card">
           <p style="color:#666;font-size:15px">指名を送信しました</p>
           <p class="waiting">他の参加者の入力を待っています…</p>
+          <button class="btn btn-sm" style="margin-top:12px" onclick="pollResult()">🔄 更新</button>
+        </div>` : `
+        <div class="card">
+          <p class="waiting">やり直し中の参加者の入力を待っています…</p>
           <button class="btn btn-sm" style="margin-top:12px" onclick="pollResult()">🔄 更新</button>
         </div>`}
       ${r.all_confirmed&&r.all_confirmed.length>0 ? `
@@ -143,9 +205,9 @@ function render() {
       <h1 style="margin-top:32px">${rr.round}巡目 結果発表</h1>
       <div class="card" style="margin-top:16px">
         ${r.players.map((p,i)=>{
-          const pick = (r.current_picks||{})[String(i)];
-          const isWinner = pick && rr.uniqueWinners[i]===pick;
-          const isDup = pick && rr.duplicateGroups[pick];
+          const pick = (rr.allPicks||{})[String(i)];
+          const isWinner = rr.winners.includes(i);
+          const isRedo = rr.redoPlayers.includes(i);
           return `<div class="player-row" style="padding:10px 0">
             ${avatar(p.name,i)}
             <div style="flex:1">
@@ -153,22 +215,25 @@ function render() {
               <div class="pick-name">${pick||'—'}</div>
             </div>
             ${pick ? (isWinner
-              ? `<span class="badge badge-ok">${isDup?'🎲 当確（抽選）':'✓ 当確'}</span>`
-              : isDup ? `<span class="badge badge-ng">被り → ハズレ</span>` : '') : ''}
+              ? `<span class="badge badge-ok">✓ 当確</span>`
+              : isRedo ? `<span class="badge badge-redo">やり直し</span>` : '') : ''}
           </div>`;
         }).join('')}
       </div>
-      ${Object.keys(rr.duplicateGroups).length>0 ? `
+      ${rr.redoPlayers.length > 0 ? `
         <div class="card" style="background:#faeeda;border-color:#ef9f27">
-          ${Object.entries(rr.duplicateGroups).map(([name,who])=>`
-            <div style="font-size:13px;color:#633806">
-              「${name}」で${who.map(i=>r.players[i]?.name).join('・')}が被り → ${r.players[rr.winners[name]]?.name}が当確（抽選）
-            </div>`).join('')}
-        </div>` : ''}
-      ${s.myIndex===0
-        ? `<button class="btn btn-primary" onclick="nextRound()">${r.round>=r.max_rounds?'最終結果を見る':`${r.round+1}巡目へ`}</button>`
-        : '<p class="waiting">主催者が次の巡を開始するまでお待ちください…</p>'}
-      <br><button class="btn btn-sm" style="margin-top:12px" onclick="pollNext()">🔄 更新</button>`;
+          <div style="font-size:13px;color:#633806">
+            「${rr.redoName}」で${rr.redoPlayers.map(i=>r.players[i]?.name).join('・')}が被りました → やり直しです
+          </div>
+        </div>
+        ${s.myIndex===0
+          ? `<button class="btn btn-primary" onclick="startRedo()">やり直しを開始する</button>`
+          : '<p class="waiting">主催者がやり直しを開始するまでお待ちください…</p>'}
+        <br><button class="btn btn-sm" style="margin-top:12px" onclick="pollNext()">🔄 更新</button>`
+      : `${s.myIndex===0
+          ? `<button class="btn btn-primary" onclick="nextRound()">${r.round>=r.max_rounds?'最終結果を見る':`${r.round+1}巡目へ`}</button>`
+          : '<p class="waiting">主催者が次の巡を開始するまでお待ちください…</p>'}
+        <br><button class="btn btn-sm" style="margin-top:12px" onclick="pollNext()">🔄 更新</button>`}`;
   } else if(s.screen === 'final') {
     const r = s.room;
     app.innerHTML = `
@@ -188,7 +253,11 @@ function render() {
   }
 }
 
-function goTop() { state = { screen:'top', room:null, myIndex:null, submitted:false, roundResult:null }; render(); }
+function goTop() {
+  clearURL();
+  state = { screen:'top', room:null, myIndex:null, submitted:false, roundResult:null };
+  render();
+}
 function goCreate() { state.screen='create'; render(); }
 function goJoin() { state.screen='join'; render(); }
 
@@ -196,9 +265,11 @@ async function createRoom() {
   const name = document.getElementById('cname').value.trim();
   if(!name) return;
   const code = genCode();
-  const room = { code, round:1, max_rounds:20, phase:'lobby', players:[{name,confirmed:[]}], current_picks:{}, all_confirmed:[] };
+  const room = { code, round:1, max_rounds:20, phase:'lobby', players:[{name,confirmed:[]}], current_picks:{}, all_confirmed:[], redo_players:[], redo_name:null };
   await saveRoom(room);
-  state.room = room; state.myIndex = 0; state.screen = 'lobby'; render();
+  state.room = room; state.myIndex = 0; state.screen = 'lobby';
+  saveStateToURL(code, 0); // ① URLに保存
+  render();
 }
 
 async function joinRoom() {
@@ -212,13 +283,17 @@ async function joinRoom() {
   const idx = r.players.length;
   r.players.push({name, confirmed:[]});
   await saveRoom(r);
-  state.room = r; state.myIndex = idx; state.screen = 'lobby'; render();
+  state.room = r; state.myIndex = idx; state.screen = 'lobby';
+  saveStateToURL(code, idx); // ① URLに保存
+  render();
 }
 
 async function startGame() {
   const r = await getRoom(state.room.code);
   if(r.players.length<2) { alert('2名以上必要です'); return; }
   r.phase = 'picking';
+  r.redo_players = [];
+  r.redo_name = null;
   await saveRoom(r);
   state.room = r; state.screen = 'pick'; state.submitted = false; render();
 }
@@ -235,10 +310,17 @@ async function submitPick() {
   if(!val) { document.getElementById('pick-err').textContent='名前を入力してください'; return; }
   const r = await getRoom(state.room.code);
   if((r.all_confirmed||[]).includes(val)) { document.getElementById('pick-err').textContent=`「${val}」は既に確定済みです`; return; }
+  
   const picks = r.current_picks || {};
   picks[String(state.myIndex)] = val;
   r.current_picks = picks;
-  if(Object.keys(picks).length === r.players.length) { r.phase = 'result'; }
+
+  // ② やり直し中かどうかで、全員揃ったか判定するプレイヤー数が変わる
+  const redoPlayers = r.redo_players || [];
+  const targetCount = redoPlayers.length > 0 ? redoPlayers.length : r.players.length;
+  const submittedCount = Object.keys(picks).length;
+
+  if(submittedCount === targetCount) { r.phase = 'result'; }
   await saveRoom(r);
   state.room = r; state.submitted = true;
   if(r.phase==='result') { buildResult(r); state.screen='result'; }
@@ -255,36 +337,74 @@ async function pollResult() {
 function buildResult(r) {
   const picks = r.current_picks || {};
   const allPicks = Object.values(picks);
-  const duplicateGroups = {};
-  allPicks.forEach(p => {
-    const who = Object.entries(picks).filter(([,v])=>v===p).map(([k])=>parseInt(k));
-    if(who.length>1) duplicateGroups[p]=who;
+  
+  // ② 被りを検出
+  const nameCounts = {};
+  allPicks.forEach(p => { nameCounts[p] = (nameCounts[p]||0) + 1; });
+  const dupName = Object.entries(nameCounts).find(([,cnt]) => cnt > 1)?.[0] || null;
+  
+  let redoPlayers = [];
+  let winners = [];
+
+  if (dupName) {
+    // 被った人全員をやり直しに
+    redoPlayers = Object.entries(picks).filter(([,v])=>v===dupName).map(([k])=>parseInt(k));
+    // 被っていない人は当確
+    winners = Object.entries(picks).filter(([,v])=>v!==dupName).map(([k])=>parseInt(k));
+  } else {
+    // 全員当確
+    winners = Object.keys(picks).map(k=>parseInt(k));
+  }
+
+  state.roundResult = { round: r.round, allPicks: picks, dupName, redoPlayers, redoName: dupName, winners };
+}
+
+// ② やり直し開始
+async function startRedo() {
+  const r = await getRoom(state.room.code);
+  const rr = state.roundResult;
+  
+  // 当確者の指名をconfirmedに追加
+  rr.winners.forEach(i => {
+    const pick = (r.current_picks||{})[String(i)];
+    if(pick && !(r.all_confirmed||[]).includes(pick)) {
+      r.all_confirmed.push(pick);
+      r.players[i].confirmed = [...(r.players[i].confirmed||[]), pick];
+    }
   });
-  const winners = {};
-  Object.entries(duplicateGroups).forEach(([name,who])=>{ winners[name]=shuffle(who)[0]; });
-  const uniqueWinners = {};
-  Object.entries(picks).forEach(([i,pick])=>{
-    const pi=parseInt(i);
-    if(!duplicateGroups[pick]) uniqueWinners[pi]=pick;
-    else if(winners[pick]===pi) uniqueWinners[pi]=pick;
-  });
-  state.roundResult = { round:r.round, duplicateGroups, winners, uniqueWinners };
+
+  // やり直し対象者のpicksをリセット
+  const newPicks = {};
+  r.redo_players = rr.redoPlayers;
+  r.redo_name = rr.redoName;
+  r.current_picks = newPicks;
+  r.phase = 'picking';
+  await saveRoom(r);
+  
+  state.room = r;
+  state.submitted = false;
+  state.roundResult = null;
+  state.screen = 'pick';
+  render();
 }
 
 async function nextRound() {
   const r = await getRoom(state.room.code);
   const picks = r.current_picks || {};
   const rr = state.roundResult;
-  r.players = r.players.map((p,i)=>{
+
+  // 全員当確なので全員のpicksをconfirmedに追加
+  rr.winners.forEach(i => {
     const pick = picks[String(i)];
-    if(!pick) return p;
-    if(rr.uniqueWinners[i]===pick) {
-      if(!(r.all_confirmed||[]).includes(pick)) r.all_confirmed.push(pick);
-      return {...p, confirmed:[...(p.confirmed||[]),pick]};
+    if(pick && !(r.all_confirmed||[]).includes(pick)) {
+      r.all_confirmed.push(pick);
+      r.players[i].confirmed = [...(r.players[i].confirmed||[]), pick];
     }
-    return p;
   });
+
   r.current_picks = {};
+  r.redo_players = [];
+  r.redo_name = null;
   r.round = r.round + 1;
   if(r.round > r.max_rounds) { r.phase='final'; }
   else { r.phase='picking'; }
@@ -297,12 +417,50 @@ async function nextRound() {
 async function pollNext() {
   const r = await getRoom(state.room.code);
   state.room = r;
-  if(r.phase==='picking') { state.submitted=false; state.roundResult=null; state.screen='pick'; }
-  else if(r.phase==='final') { state.screen='final'; }
+  if(r.phase==='picking') {
+    buildResultIfNeeded(r);
+    state.submitted = false;
+    state.roundResult = null;
+    state.screen = 'pick';
+  } else if(r.phase==='result') {
+    buildResult(r);
+    state.screen = 'result';
+  } else if(r.phase==='final') {
+    state.screen='final';
+  }
   render();
 }
 
-render();
+function buildResultIfNeeded(r) {
+  // やり直し中のphase移行時に呼ばれる
+}
+
+// ① ページ読み込み時にURLからルームを復元
+async function init() {
+  const { code, myIndex } = loadStateFromURL();
+  if (code && myIndex !== null) {
+    const r = await getRoom(code);
+    if (r) {
+      state.room = r;
+      state.myIndex = myIndex;
+      // phaseに応じて適切な画面に復元
+      if (r.phase === 'lobby') {
+        state.screen = 'lobby';
+      } else if (r.phase === 'picking') {
+        state.screen = 'pick';
+        state.submitted = false;
+      } else if (r.phase === 'result') {
+        buildResult(r);
+        state.screen = 'result';
+      } else if (r.phase === 'final') {
+        state.screen = 'final';
+      }
+    }
+  }
+  render();
+}
+
+init();
 </script>
 </body>
 </html>
