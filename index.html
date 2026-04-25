@@ -19,6 +19,8 @@
   .btn-sm { padding: 6px 16px; font-size: 13px; }
   .error { color: #e24b4a; font-size: 13px; margin-bottom: 8px; }
   .player-row { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px solid #f0f0f0; }
+  .player-row.selectable { cursor: pointer; border-radius: 8px; padding: 10px; transition: background 0.15s; }
+  .player-row.selectable:hover { background: #f0f7ff; }
   .avatar { width: 32px; height: 32px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: 500; font-size: 13px; flex-shrink: 0; }
   .badge { display: inline-block; border-radius: 6px; padding: 3px 10px; font-size: 12px; font-weight: 500; }
   .badge-ok { background: #e1f5ee; color: #0f6e56; }
@@ -29,6 +31,7 @@
   .final-card { background: #fff; border-radius: 12px; border: 1px solid #e5e5e5; padding: 16px; margin-bottom: 12px; }
   .pick-name { font-size: 15px; color: #444; }
   .waiting { font-size: 13px; color: #888; margin-top: 8px; }
+  .divider { text-align: center; color: #bbb; font-size: 13px; margin: 8px 0 16px; }
   .avatar-colors { --c0: #E6F1FB; --t0: #185FA5; --c1: #E1F5EE; --t1: #0F6E56; --c2: #FAECE7; --t2: #993C1D; --c3: #F5E6FB; --t3: #7B2FA8; }
 </style>
 </head>
@@ -42,7 +45,6 @@ const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 const COLORS = ['#E6F1FB','#E1F5EE','#FAECE7','#F5E6FB'];
 const TEXT_COLORS = ['#185FA5','#0F6E56','#993C1D','#7B2FA8'];
 
-// ① URLからルームコードと自分のインデックスを復元
 function loadStateFromURL() {
   const params = new URLSearchParams(window.location.search);
   const code = params.get('code');
@@ -50,13 +52,11 @@ function loadStateFromURL() {
   return { code, myIndex: myIndex !== null ? parseInt(myIndex) : null };
 }
 
-// ① URLにルームコードと自分のインデックスを保存
 function saveStateToURL(code, myIndex) {
   const params = new URLSearchParams();
   params.set('code', code);
   if (myIndex !== null) params.set('me', myIndex);
-  const newURL = window.location.pathname + '?' + params.toString();
-  window.history.replaceState({}, '', newURL);
+  window.history.replaceState({}, '', window.location.pathname + '?' + params.toString());
 }
 
 function clearURL() {
@@ -86,17 +86,12 @@ async function saveRoom(room) {
   await sb.from('rooms').upsert(room);
 }
 
-// ② 被った人のリストを返すヘルパー
 function getDuplicatePlayers(picks) {
   const duplicates = new Set();
   const seen = {};
   Object.entries(picks).forEach(([i, name]) => {
-    if (seen[name] !== undefined) {
-      duplicates.add(parseInt(seen[name]));
-      duplicates.add(parseInt(i));
-    } else {
-      seen[name] = i;
-    }
+    if (seen[name] !== undefined) { duplicates.add(parseInt(seen[name])); duplicates.add(parseInt(i)); }
+    else { seen[name] = i; }
   });
   return [...duplicates];
 }
@@ -104,12 +99,14 @@ function getDuplicatePlayers(picks) {
 function render() {
   const app = document.getElementById('app');
   const s = state;
+
   if(s.screen === 'top') {
     app.innerHTML = `
       <h1 style="margin-top:32px">ドラフト会議</h1>
       <p class="sub">最大4名・最大20巡のドラフトを開催しよう</p>
       <button class="btn btn-primary" onclick="goCreate()">ルームを作る</button>
-      <button class="btn" onclick="goJoin()">ルームに参加する</button>`;
+      <button class="btn" onclick="goJoin()">ルームに参加 / 再参加</button>`;
+
   } else if(s.screen === 'create') {
     app.innerHTML = `
       <h1 style="margin-top:32px">ルームを作る</h1>
@@ -119,17 +116,43 @@ function render() {
         <button class="btn btn-primary" onclick="createRoom()">作成する</button>
       </div>
       <button class="btn btn-sm" style="margin-top:4px" onclick="goTop()">← 戻る</button>`;
+
   } else if(s.screen === 'join') {
     app.innerHTML = `
-      <h1 style="margin-top:32px">ルームに参加する</h1>
+      <h1 style="margin-top:32px">ルームに参加 / 再参加</h1>
       <div class="card" style="margin-top:16px">
         <label>ルームコード（4桁）</label>
         <input id="jcode" maxlength="4" placeholder="例: AB3X" style="text-transform:uppercase">
-        <label>あなたの名前</label>
-        <input id="jname" maxlength="20" placeholder="例: 鈴木">
-        <button class="btn btn-primary" onclick="joinRoom()">参加する</button>
+        <div id="join-err" class="error"></div>
+        <button class="btn btn-primary" onclick="lookupRoom()">ルームを検索する</button>
       </div>
       <button class="btn btn-sm" style="margin-top:4px" onclick="goTop()">← 戻る</button>`;
+
+  } else if(s.screen === 'join_select') {
+    // コードを入力後、参加者一覧を見て自分を選ぶ or 新規参加
+    const r = s.room;
+    app.innerHTML = `
+      <h1 style="margin-top:32px">ルームを選択</h1>
+      <div class="card" style="margin-top:16px">
+        <div style="font-size:13px;color:#888;margin-bottom:12px">ルームコード: <strong>${r.code}</strong></div>
+
+        <label style="margin-bottom:10px">以前参加したことがある方 → 自分の名前を選んでください</label>
+        ${r.players.map((p,i)=>`
+          <div class="player-row selectable" onclick="rejoinAs(${i})">
+            ${avatar(p.name,i)}
+            <span style="font-size:15px;font-weight:500">${p.name}</span>
+            <span style="margin-left:auto;font-size:12px;color:#378ADD">再参加 →</span>
+          </div>`).join('')}
+
+        ${r.phase==='lobby' && r.players.length < 4 ? `
+          <div class="divider" style="margin-top:16px">── または ──</div>
+          <label>新規参加（名前を入力）</label>
+          <input id="jname" maxlength="20" placeholder="例: 鈴木">
+          <div id="join-err2" class="error"></div>
+          <button class="btn btn-primary" onclick="joinAsNew()">新規で参加する</button>` : ''}
+      </div>
+      <button class="btn btn-sm" style="margin-top:4px" onclick="goJoin()">← 戻る</button>`;
+
   } else if(s.screen === 'lobby') {
     const r = s.room;
     app.innerHTML = `
@@ -147,11 +170,13 @@ function render() {
         </div>
         <div style="margin-top:8px;font-size:13px;color:#888">${r.players.length}/4名 参加中</div>
       </div>
-      ${s.myIndex===0 ? `<button class="btn btn-primary" onclick="startGame()">ゲームを開始する</button>` : '<p class="waiting">主催者がゲームを開始するまでお待ちください…</p>'}
+      ${s.myIndex===0
+        ? `<button class="btn btn-primary" onclick="startGame()">ゲームを開始する</button>`
+        : '<p class="waiting">主催者がゲームを開始するまでお待ちください…</p>'}
       <br><button class="btn btn-sm" style="margin-top:12px" onclick="refreshLobby()">🔄 更新</button>`;
+
   } else if(s.screen === 'pick') {
     const r = s.room;
-    // ② 被りやり直しの場合、自分がやり直し対象かチェック
     const redoPlayers = r.redo_players || [];
     const isRedo = redoPlayers.length > 0;
     const myTurnInRedo = redoPlayers.includes(s.myIndex);
@@ -172,7 +197,6 @@ function render() {
     }
 
     const canPick = !isRedo || myTurnInRedo;
-
     app.innerHTML = `
       <h1 style="margin-top:32px">${r.round}巡目${isRedo?' (やり直し)':''}</h1>
       <div style="font-size:13px;color:#888;margin-bottom:16px">${cnt}/${isRedo ? redoPlayers.length : r.players.length}名 入力済み</div>
@@ -198,6 +222,7 @@ function render() {
           <div style="font-size:13px;color:#888;margin-bottom:8px">確定済み選手（指名不可）</div>
           <div>${r.all_confirmed.map(n=>`<span class="confirmed-tag">${n}</span>`).join('')}</div>
         </div>` : ''}`;
+
   } else if(s.screen === 'result') {
     const r = s.room;
     const rr = s.roundResult;
@@ -214,8 +239,7 @@ function render() {
               <div style="font-size:14px;font-weight:500">${p.name}</div>
               <div class="pick-name">${pick||'—'}</div>
             </div>
-            ${pick ? (isWinner
-              ? `<span class="badge badge-ok">✓ 当確</span>`
+            ${pick ? (isWinner ? `<span class="badge badge-ok">✓ 当確</span>`
               : isRedo ? `<span class="badge badge-redo">やり直し</span>` : '') : ''}
           </div>`;
         }).join('')}
@@ -234,6 +258,7 @@ function render() {
           ? `<button class="btn btn-primary" onclick="nextRound()">${r.round>=r.max_rounds?'最終結果を見る':`${r.round+1}巡目へ`}</button>`
           : '<p class="waiting">主催者が次の巡を開始するまでお待ちください…</p>'}
         <br><button class="btn btn-sm" style="margin-top:12px" onclick="pollNext()">🔄 更新</button>`}`;
+
   } else if(s.screen === 'final') {
     const r = s.room;
     app.innerHTML = `
@@ -253,13 +278,48 @@ function render() {
   }
 }
 
-function goTop() {
-  clearURL();
-  state = { screen:'top', room:null, myIndex:null, submitted:false, roundResult:null };
-  render();
-}
+function goTop() { clearURL(); state = { screen:'top', room:null, myIndex:null, submitted:false, roundResult:null }; render(); }
 function goCreate() { state.screen='create'; render(); }
 function goJoin() { state.screen='join'; render(); }
+
+// ルームコードを入力して検索
+async function lookupRoom() {
+  const code = document.getElementById('jcode').value.trim().toUpperCase();
+  if(!code || code.length < 4) { document.getElementById('join-err').textContent='4桁のコードを入力してください'; return; }
+  const r = await getRoom(code);
+  if(!r) { document.getElementById('join-err').textContent='ルームが見つかりません'; return; }
+  state.room = r;
+  state.screen = 'join_select';
+  render();
+}
+
+// 既存メンバーとして再参加
+async function rejoinAs(index) {
+  const r = await getRoom(state.room.code);
+  state.room = r;
+  state.myIndex = index;
+  saveStateToURL(r.code, index);
+  if(r.phase === 'lobby') { state.screen = 'lobby'; }
+  else if(r.phase === 'picking') { state.screen = 'pick'; state.submitted = false; }
+  else if(r.phase === 'result') { buildResult(r); state.screen = 'result'; }
+  else if(r.phase === 'final') { state.screen = 'final'; }
+  render();
+}
+
+// 新規メンバーとして参加
+async function joinAsNew() {
+  const name = document.getElementById('jname').value.trim();
+  if(!name) { document.getElementById('join-err2').textContent='名前を入力してください'; return; }
+  const r = await getRoom(state.room.code);
+  if(r.players.length>=4) { alert('満員です'); return; }
+  if(r.phase!=='lobby') { alert('既にゲームが始まっています'); return; }
+  const idx = r.players.length;
+  r.players.push({name, confirmed:[]});
+  await saveRoom(r);
+  state.room = r; state.myIndex = idx; state.screen = 'lobby';
+  saveStateToURL(r.code, idx);
+  render();
+}
 
 async function createRoom() {
   const name = document.getElementById('cname').value.trim();
@@ -268,32 +328,14 @@ async function createRoom() {
   const room = { code, round:1, max_rounds:20, phase:'lobby', players:[{name,confirmed:[]}], current_picks:{}, all_confirmed:[], redo_players:[], redo_name:null };
   await saveRoom(room);
   state.room = room; state.myIndex = 0; state.screen = 'lobby';
-  saveStateToURL(code, 0); // ① URLに保存
-  render();
-}
-
-async function joinRoom() {
-  const code = document.getElementById('jcode').value.trim().toUpperCase();
-  const name = document.getElementById('jname').value.trim();
-  if(!code||!name) return;
-  const r = await getRoom(code);
-  if(!r) { alert('ルームが見つかりません'); return; }
-  if(r.players.length>=4) { alert('満員です'); return; }
-  if(r.phase!=='lobby') { alert('既にゲームが始まっています'); return; }
-  const idx = r.players.length;
-  r.players.push({name, confirmed:[]});
-  await saveRoom(r);
-  state.room = r; state.myIndex = idx; state.screen = 'lobby';
-  saveStateToURL(code, idx); // ① URLに保存
+  saveStateToURL(code, 0);
   render();
 }
 
 async function startGame() {
   const r = await getRoom(state.room.code);
   if(r.players.length<2) { alert('2名以上必要です'); return; }
-  r.phase = 'picking';
-  r.redo_players = [];
-  r.redo_name = null;
+  r.phase = 'picking'; r.redo_players = []; r.redo_name = null;
   await saveRoom(r);
   state.room = r; state.screen = 'pick'; state.submitted = false; render();
 }
@@ -310,17 +352,12 @@ async function submitPick() {
   if(!val) { document.getElementById('pick-err').textContent='名前を入力してください'; return; }
   const r = await getRoom(state.room.code);
   if((r.all_confirmed||[]).includes(val)) { document.getElementById('pick-err').textContent=`「${val}」は既に確定済みです`; return; }
-  
   const picks = r.current_picks || {};
   picks[String(state.myIndex)] = val;
   r.current_picks = picks;
-
-  // ② やり直し中かどうかで、全員揃ったか判定するプレイヤー数が変わる
   const redoPlayers = r.redo_players || [];
   const targetCount = redoPlayers.length > 0 ? redoPlayers.length : r.players.length;
-  const submittedCount = Object.keys(picks).length;
-
-  if(submittedCount === targetCount) { r.phase = 'result'; }
+  if(Object.keys(picks).length === targetCount) { r.phase = 'result'; }
   await saveRoom(r);
   state.room = r; state.submitted = true;
   if(r.phase==='result') { buildResult(r); state.screen='result'; }
@@ -337,34 +374,22 @@ async function pollResult() {
 function buildResult(r) {
   const picks = r.current_picks || {};
   const allPicks = Object.values(picks);
-  
-  // ② 被りを検出
   const nameCounts = {};
   allPicks.forEach(p => { nameCounts[p] = (nameCounts[p]||0) + 1; });
   const dupName = Object.entries(nameCounts).find(([,cnt]) => cnt > 1)?.[0] || null;
-  
-  let redoPlayers = [];
-  let winners = [];
-
+  let redoPlayers = [], winners = [];
   if (dupName) {
-    // 被った人全員をやり直しに
     redoPlayers = Object.entries(picks).filter(([,v])=>v===dupName).map(([k])=>parseInt(k));
-    // 被っていない人は当確
     winners = Object.entries(picks).filter(([,v])=>v!==dupName).map(([k])=>parseInt(k));
   } else {
-    // 全員当確
     winners = Object.keys(picks).map(k=>parseInt(k));
   }
-
   state.roundResult = { round: r.round, allPicks: picks, dupName, redoPlayers, redoName: dupName, winners };
 }
 
-// ② やり直し開始
 async function startRedo() {
   const r = await getRoom(state.room.code);
   const rr = state.roundResult;
-  
-  // 当確者の指名をconfirmedに追加
   rr.winners.forEach(i => {
     const pick = (r.current_picks||{})[String(i)];
     if(pick && !(r.all_confirmed||[]).includes(pick)) {
@@ -372,19 +397,9 @@ async function startRedo() {
       r.players[i].confirmed = [...(r.players[i].confirmed||[]), pick];
     }
   });
-
-  // やり直し対象者のpicksをリセット
-  const newPicks = {};
-  r.redo_players = rr.redoPlayers;
-  r.redo_name = rr.redoName;
-  r.current_picks = newPicks;
-  r.phase = 'picking';
+  r.redo_players = rr.redoPlayers; r.redo_name = rr.redoName; r.current_picks = {}; r.phase = 'picking';
   await saveRoom(r);
-  
-  state.room = r;
-  state.submitted = false;
-  state.roundResult = null;
-  state.screen = 'pick';
+  state.room = r; state.submitted = false; state.roundResult = null; state.screen = 'pick';
   render();
 }
 
@@ -392,8 +407,6 @@ async function nextRound() {
   const r = await getRoom(state.room.code);
   const picks = r.current_picks || {};
   const rr = state.roundResult;
-
-  // 全員当確なので全員のpicksをconfirmedに追加
   rr.winners.forEach(i => {
     const pick = picks[String(i)];
     if(pick && !(r.all_confirmed||[]).includes(pick)) {
@@ -401,13 +414,9 @@ async function nextRound() {
       r.players[i].confirmed = [...(r.players[i].confirmed||[]), pick];
     }
   });
-
-  r.current_picks = {};
-  r.redo_players = [];
-  r.redo_name = null;
+  r.current_picks = {}; r.redo_players = []; r.redo_name = null;
   r.round = r.round + 1;
-  if(r.round > r.max_rounds) { r.phase='final'; }
-  else { r.phase='picking'; }
+  r.phase = r.round > r.max_rounds ? 'final' : 'picking';
   await saveRoom(r);
   state.room = r; state.submitted = false; state.roundResult = null;
   state.screen = r.phase==='final' ? 'final' : 'pick';
@@ -417,44 +426,22 @@ async function nextRound() {
 async function pollNext() {
   const r = await getRoom(state.room.code);
   state.room = r;
-  if(r.phase==='picking') {
-    buildResultIfNeeded(r);
-    state.submitted = false;
-    state.roundResult = null;
-    state.screen = 'pick';
-  } else if(r.phase==='result') {
-    buildResult(r);
-    state.screen = 'result';
-  } else if(r.phase==='final') {
-    state.screen='final';
-  }
+  if(r.phase==='picking') { state.submitted=false; state.roundResult=null; state.screen='pick'; }
+  else if(r.phase==='result') { buildResult(r); state.screen='result'; }
+  else if(r.phase==='final') { state.screen='final'; }
   render();
 }
 
-function buildResultIfNeeded(r) {
-  // やり直し中のphase移行時に呼ばれる
-}
-
-// ① ページ読み込み時にURLからルームを復元
 async function init() {
   const { code, myIndex } = loadStateFromURL();
   if (code && myIndex !== null) {
     const r = await getRoom(code);
     if (r) {
-      state.room = r;
-      state.myIndex = myIndex;
-      // phaseに応じて適切な画面に復元
-      if (r.phase === 'lobby') {
-        state.screen = 'lobby';
-      } else if (r.phase === 'picking') {
-        state.screen = 'pick';
-        state.submitted = false;
-      } else if (r.phase === 'result') {
-        buildResult(r);
-        state.screen = 'result';
-      } else if (r.phase === 'final') {
-        state.screen = 'final';
-      }
+      state.room = r; state.myIndex = myIndex;
+      if(r.phase==='lobby') { state.screen='lobby'; }
+      else if(r.phase==='picking') { state.screen='pick'; state.submitted=false; }
+      else if(r.phase==='result') { buildResult(r); state.screen='result'; }
+      else if(r.phase==='final') { state.screen='final'; }
     }
   }
   render();
