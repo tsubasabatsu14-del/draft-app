@@ -18,8 +18,8 @@
   .btn-primary { background: #378ADD; color: #fff; border: none; font-weight: 500; }
   .btn-sm { padding: 6px 16px; font-size: 13px; }
   .error { color: #e24b4a; font-size: 13px; margin-bottom: 8px; }
-  .player-row { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px solid #f0f0f0; }
-  .player-row.selectable { cursor: pointer; border-radius: 8px; padding: 10px; transition: background 0.15s; }
+  .player-row { display: flex; align-items: center; gap: 10px; padding: 10px; border-bottom: 1px solid #f0f0f0; border-radius: 8px; }
+  .player-row.selectable { cursor: pointer; transition: background 0.15s; }
   .player-row.selectable:hover { background: #f0f7ff; }
   .avatar { width: 32px; height: 32px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: 500; font-size: 13px; flex-shrink: 0; }
   .badge { display: inline-block; border-radius: 6px; padding: 3px 10px; font-size: 12px; font-weight: 500; }
@@ -31,7 +31,7 @@
   .final-card { background: #fff; border-radius: 12px; border: 1px solid #e5e5e5; padding: 16px; margin-bottom: 12px; }
   .pick-name { font-size: 15px; color: #444; }
   .waiting { font-size: 13px; color: #888; margin-top: 8px; }
-  .divider { text-align: center; color: #bbb; font-size: 13px; margin: 8px 0 16px; }
+  .pin-hint { font-size: 12px; color: #999; margin-top: -8px; margin-bottom: 12px; }
   .avatar-colors { --c0: #E6F1FB; --t0: #185FA5; --c1: #E1F5EE; --t1: #0F6E56; --c2: #FAECE7; --t2: #993C1D; --c3: #F5E6FB; --t3: #7B2FA8; }
 </style>
 </head>
@@ -63,7 +63,7 @@ function clearURL() {
   window.history.replaceState({}, '', window.location.pathname);
 }
 
-let state = { screen: 'top', room: null, myIndex: null, submitted: false, roundResult: null };
+let state = { screen: 'top', room: null, myIndex: null, submitted: false, roundResult: null, rejoiningIndex: null };
 
 function avatar(name, i) {
   return `<div class="avatar" style="background:${COLORS[i%4]};color:${TEXT_COLORS[i%4]}">${name[0]}</div>`;
@@ -88,16 +88,6 @@ async function saveRoom(room) {
   if (error) console.error('saveRoom error:', error);
 }
 
-function getDuplicatePlayers(picks) {
-  const duplicates = new Set();
-  const seen = {};
-  Object.entries(picks).forEach(([i, name]) => {
-    if (seen[name] !== undefined) { duplicates.add(parseInt(seen[name])); duplicates.add(parseInt(i)); }
-    else { seen[name] = i; }
-  });
-  return [...duplicates];
-}
-
 function render() {
   const app = document.getElementById('app');
   const s = state;
@@ -115,6 +105,10 @@ function render() {
       <div class="card" style="margin-top:16px">
         <label>あなたの名前</label>
         <input id="cname" maxlength="20" placeholder="例: 田中">
+        <label>あなたのPIN（4桁の数字）</label>
+        <input id="cpin" maxlength="4" placeholder="例: 1234" type="password" inputmode="numeric">
+        <p class="pin-hint">※ 再参加時に使います。忘れずに！</p>
+        <div id="create-err" class="error"></div>
         <button class="btn btn-primary" onclick="createRoom()">作成する</button>
       </div>
       <button class="btn btn-sm" style="margin-top:4px" onclick="goTop()">← 戻る</button>`;
@@ -133,24 +127,45 @@ function render() {
   } else if (s.screen === 'join_select') {
     const r = s.room;
     app.innerHTML = `
-      <h1 style="margin-top:32px">ルームを選択</h1>
+      <h1 style="margin-top:32px">参加者を選択</h1>
       <div class="card" style="margin-top:16px">
         <div style="font-size:13px;color:#888;margin-bottom:12px">ルームコード: <strong>${r.code}</strong></div>
-        <label style="margin-bottom:10px">以前参加したことがある方 → 自分の名前を選んでください</label>
+        <label style="margin-bottom:10px">自分の名前を選んでください</label>
         ${r.players.map((p, i) => `
-          <div class="player-row selectable" onclick="rejoinAs(${i})">
+          <div class="player-row selectable" onclick="selectPlayerForRejoin(${i})">
             ${avatar(p.name, i)}
             <span style="font-size:15px;font-weight:500">${p.name}</span>
-            <span style="margin-left:auto;font-size:12px;color:#378ADD">再参加 →</span>
+            <span style="margin-left:auto;font-size:12px;color:#378ADD">選択 →</span>
           </div>`).join('')}
         ${r.phase === 'lobby' && r.players.length < 4 ? `
-          <div class="divider" style="margin-top:16px">── または ──</div>
-          <label>新規参加（名前を入力）</label>
-          <input id="jname" maxlength="20" placeholder="例: 鈴木">
-          <div id="join-err2" class="error"></div>
-          <button class="btn btn-primary" onclick="joinAsNew()">新規で参加する</button>` : ''}
+          <div style="margin-top:16px;padding-top:16px;border-top:1px solid #eee">
+            <label>新規参加（名前とPINを入力）</label>
+            <input id="jname" maxlength="20" placeholder="名前（例: 鈴木）">
+            <input id="jpin" maxlength="4" placeholder="PIN（4桁の数字）" type="password" inputmode="numeric">
+            <p class="pin-hint">※ 再参加時に使います。忘れずに！</p>
+            <div id="join-err2" class="error"></div>
+            <button class="btn btn-primary" onclick="joinAsNew()">新規で参加する</button>
+          </div>` : ''}
       </div>
       <button class="btn btn-sm" style="margin-top:4px" onclick="goJoin()">← 戻る</button>`;
+
+  } else if (s.screen === 'pin_verify') {
+    // 再参加時のPIN確認画面
+    const r = s.room;
+    const p = r.players[s.rejoiningIndex];
+    app.innerHTML = `
+      <h1 style="margin-top:32px">PIN確認</h1>
+      <div class="card" style="margin-top:16px">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px">
+          ${avatar(p.name, s.rejoiningIndex)}
+          <span style="font-size:16px;font-weight:500">${p.name}</span>
+        </div>
+        <label>PINを入力してください（4桁の数字）</label>
+        <input id="verify-pin" maxlength="4" placeholder="例: 1234" type="password" inputmode="numeric">
+        <div id="pin-err" class="error"></div>
+        <button class="btn btn-primary" onclick="verifyPin()">確認する</button>
+      </div>
+      <button class="btn btn-sm" style="margin-top:4px" onclick="goJoinSelect()">← 戻る</button>`;
 
   } else if (s.screen === 'lobby') {
     const r = s.room;
@@ -277,9 +292,10 @@ function render() {
   }
 }
 
-function goTop() { clearURL(); state = { screen: 'top', room: null, myIndex: null, submitted: false, roundResult: null }; render(); }
+function goTop() { clearURL(); state = { screen: 'top', room: null, myIndex: null, submitted: false, roundResult: null, rejoiningIndex: null }; render(); }
 function goCreate() { state.screen = 'create'; render(); }
 function goJoin() { state.screen = 'join'; render(); }
+function goJoinSelect() { state.screen = 'join_select'; render(); }
 
 async function lookupRoom() {
   const code = document.getElementById('jcode').value.trim().toUpperCase();
@@ -291,11 +307,34 @@ async function lookupRoom() {
   render();
 }
 
-async function rejoinAs(index) {
+// 名前を選んだ → PIN確認画面へ
+function selectPlayerForRejoin(index) {
+  state.rejoiningIndex = index;
+  state.screen = 'pin_verify';
+  render();
+}
+
+// PIN確認
+async function verifyPin() {
+  const inputPin = document.getElementById('verify-pin').value.trim();
+  if (!inputPin || inputPin.length !== 4) {
+    document.getElementById('pin-err').textContent = '4桁のPINを入力してください';
+    return;
+  }
   const r = await getRoom(state.room.code);
+  const player = r.players[state.rejoiningIndex];
+  if (!player) { document.getElementById('pin-err').textContent = 'エラーが発生しました'; return; }
+
+  // PINの照合
+  if (player.pin !== inputPin) {
+    document.getElementById('pin-err').textContent = 'PINが違います';
+    return;
+  }
+
+  // PIN一致 → 入室
   state.room = r;
-  state.myIndex = index;
-  saveStateToURL(r.code, index);
+  state.myIndex = state.rejoiningIndex;
+  saveStateToURL(r.code, state.rejoiningIndex);
   if (r.phase === 'lobby') { state.screen = 'lobby'; }
   else if (r.phase === 'picking') { state.screen = 'pick'; state.submitted = false; }
   else if (r.phase === 'result') { buildResult(r); state.screen = 'result'; }
@@ -303,14 +342,19 @@ async function rejoinAs(index) {
   render();
 }
 
+// 新規参加
 async function joinAsNew() {
   const name = document.getElementById('jname').value.trim();
+  const pin = document.getElementById('jpin').value.trim();
   if (!name) { document.getElementById('join-err2').textContent = '名前を入力してください'; return; }
+  if (!pin || pin.length !== 4 || !/^\d{4}$/.test(pin)) {
+    document.getElementById('join-err2').textContent = 'PINは4桁の数字で入力してください'; return;
+  }
   const r = await getRoom(state.room.code);
   if (r.players.length >= 4) { alert('満員です'); return; }
   if (r.phase !== 'lobby') { alert('既にゲームが始まっています'); return; }
   const idx = r.players.length;
-  r.players.push({ name, confirmed: [] });
+  r.players.push({ name, pin, confirmed: [] });
   await saveRoom(r);
   state.room = r; state.myIndex = idx; state.screen = 'lobby';
   saveStateToURL(r.code, idx);
@@ -319,9 +363,17 @@ async function joinAsNew() {
 
 async function createRoom() {
   const name = document.getElementById('cname').value.trim();
-  if (!name) return;
+  const pin = document.getElementById('cpin').value.trim();
+  if (!name) { document.getElementById('create-err').textContent = '名前を入力してください'; return; }
+  if (!pin || pin.length !== 4 || !/^\d{4}$/.test(pin)) {
+    document.getElementById('create-err').textContent = 'PINは4桁の数字で入力してください'; return;
+  }
   const code = genCode();
-  const room = { code, round: 1, max_rounds: 20, phase: 'lobby', players: [{ name, confirmed: [] }], current_picks: {}, all_confirmed: [], redo_players: [], redo_name: null };
+  const room = {
+    code, round: 1, max_rounds: 20, phase: 'lobby',
+    players: [{ name, pin, confirmed: [] }],
+    current_picks: {}, all_confirmed: [], redo_players: [], redo_name: null
+  };
   await saveRoom(room);
   state.room = room; state.myIndex = 0; state.screen = 'lobby';
   saveStateToURL(code, 0);
@@ -347,7 +399,9 @@ async function submitPick() {
   const val = document.getElementById('pick').value.trim();
   if (!val) { document.getElementById('pick-err').textContent = '名前を入力してください'; return; }
   const r = await getRoom(state.room.code);
-  if ((r.all_confirmed || []).includes(val)) { document.getElementById('pick-err').textContent = `「${val}」は既に確定済みです`; return; }
+  if ((r.all_confirmed || []).includes(val)) {
+    document.getElementById('pick-err').textContent = `「${val}」は既に確定済みです`; return;
+  }
   const picks = r.current_picks || {};
   picks[String(state.myIndex)] = val;
   r.current_picks = picks;
@@ -369,9 +423,8 @@ async function pollResult() {
 
 function buildResult(r) {
   const picks = r.current_picks || {};
-  const allPicks = Object.values(picks);
   const nameCounts = {};
-  allPicks.forEach(p => { nameCounts[p] = (nameCounts[p] || 0) + 1; });
+  Object.values(picks).forEach(p => { nameCounts[p] = (nameCounts[p] || 0) + 1; });
   const dupName = Object.entries(nameCounts).find(([, cnt]) => cnt > 1)?.[0] || null;
   let redoPlayers = [], winners = [];
   if (dupName) {
@@ -433,6 +486,7 @@ async function init() {
   if (code && myIndex !== null) {
     const r = await getRoom(code);
     if (r) {
+      // URLから復元する場合もPIN確認は不要（同じデバイス・同じブラウザからのアクセス）
       state.room = r; state.myIndex = myIndex;
       if (r.phase === 'lobby') { state.screen = 'lobby'; }
       else if (r.phase === 'picking') { state.screen = 'pick'; state.submitted = false; }
