@@ -135,4 +135,315 @@ function render() {
     app.innerHTML = `
       <h1 style="margin-top:32px">ルームを選択</h1>
       <div class="card" style="margin-top:16px">
-        <div style="font-size:1
+        <div style="font-size:13px;color:#888;margin-bottom:12px">ルームコード: <strong>${r.code}</strong></div>
+        <label style="margin-bottom:10px">以前参加したことがある方 → 自分の名前を選んでください</label>
+        ${r.players.map((p, i) => `
+          <div class="player-row selectable" onclick="rejoinAs(${i})">
+            ${avatar(p.name, i)}
+            <span style="font-size:15px;font-weight:500">${p.name}</span>
+            <span style="margin-left:auto;font-size:12px;color:#378ADD">再参加 →</span>
+          </div>`).join('')}
+        ${r.phase === 'lobby' && r.players.length < 4 ? `
+          <div class="divider" style="margin-top:16px">── または ──</div>
+          <label>新規参加（名前を入力）</label>
+          <input id="jname" maxlength="20" placeholder="例: 鈴木">
+          <div id="join-err2" class="error"></div>
+          <button class="btn btn-primary" onclick="joinAsNew()">新規で参加する</button>` : ''}
+      </div>
+      <button class="btn btn-sm" style="margin-top:4px" onclick="goJoin()">← 戻る</button>`;
+
+  } else if (s.screen === 'lobby') {
+    const r = s.room;
+    app.innerHTML = `
+      <h1 style="margin-top:32px">ロビー</h1>
+      <div class="card" style="margin-top:16px">
+        <label>ルームコード（友人に共有してください）</label>
+        <div class="code-big">${r.code}</div>
+        <div style="margin-top:16px">
+          ${r.players.map((p, i) => `
+            <div class="player-row">
+              ${avatar(p.name, i)}
+              <span style="font-size:14px">${p.name}</span>
+              ${i === s.myIndex ? '<span style="font-size:12px;color:#888">（あなた）</span>' : ''}
+            </div>`).join('')}
+        </div>
+        <div style="margin-top:8px;font-size:13px;color:#888">${r.players.length}/4名 参加中</div>
+      </div>
+      ${s.myIndex === 0
+        ? `<button class="btn btn-primary" onclick="startGame()">ゲームを開始する</button>`
+        : '<p class="waiting">主催者がゲームを開始するまでお待ちください…</p>'}
+      <br><button class="btn btn-sm" style="margin-top:12px" onclick="refreshLobby()">🔄 更新</button>`;
+
+  } else if (s.screen === 'pick') {
+    const r = s.room;
+    const redoPlayers = r.redo_players || [];
+    const isRedo = redoPlayers.length > 0;
+    const myTurnInRedo = redoPlayers.includes(s.myIndex);
+    const cnt = Object.keys(r.current_picks || {}).length;
+
+    let instruction = '';
+    if (isRedo) {
+      const redoNames = redoPlayers.map(i => r.players[i]?.name).join('・');
+      if (myTurnInRedo) {
+        instruction = `<div class="card" style="background:#faeeda;border-color:#ef9f27;margin-bottom:12px">
+          <div style="font-size:13px;color:#633806">⚠️ 「${r.redo_name}」で被りが発生しました。あなたはやり直しです。別の選手を指名してください。</div>
+        </div>`;
+      } else {
+        instruction = `<div class="card" style="background:#faeeda;border-color:#ef9f27;margin-bottom:12px">
+          <div style="font-size:13px;color:#633806">⚠️ ${redoNames} がやり直し中です。お待ちください。</div>
+        </div>`;
+      }
+    }
+
+    const canPick = !isRedo || myTurnInRedo;
+    app.innerHTML = `
+      <h1 style="margin-top:32px">${r.round}巡目${isRedo ? ' (やり直し)' : ''}</h1>
+      <div style="font-size:13px;color:#888;margin-bottom:16px">${cnt}/${isRedo ? redoPlayers.length : r.players.length}名 入力済み</div>
+      ${instruction}
+      ${canPick && !s.submitted ? `
+        <div class="card">
+          <label>指名する選手名を入力してください</label>
+          <input id="pick" maxlength="30" placeholder="選手名">
+          <div id="pick-err" class="error"></div>
+          <button class="btn btn-primary" onclick="submitPick()">指名する</button>
+        </div>` : canPick && s.submitted ? `
+        <div class="card">
+          <p style="color:#666;font-size:15px">指名を送信しました</p>
+          <p class="waiting">他の参加者の入力を待っています…</p>
+          <button class="btn btn-sm" style="margin-top:12px" onclick="pollResult()">🔄 更新</button>
+        </div>` : `
+        <div class="card">
+          <p class="waiting">やり直し中の参加者の入力を待っています…</p>
+          <button class="btn btn-sm" style="margin-top:12px" onclick="pollResult()">🔄 更新</button>
+        </div>`}
+      ${r.all_confirmed && r.all_confirmed.length > 0 ? `
+        <div class="card">
+          <div style="font-size:13px;color:#888;margin-bottom:8px">確定済み選手（指名不可）</div>
+          <div>${r.all_confirmed.map(n => `<span class="confirmed-tag">${n}</span>`).join('')}</div>
+        </div>` : ''}`;
+
+  } else if (s.screen === 'result') {
+    const r = s.room;
+    const rr = s.roundResult;
+    app.innerHTML = `
+      <h1 style="margin-top:32px">${rr.round}巡目 結果発表</h1>
+      <div class="card" style="margin-top:16px">
+        ${r.players.map((p, i) => {
+          const pick = (rr.allPicks || {})[String(i)];
+          const isWinner = rr.winners.includes(i);
+          const isRedoP = rr.redoPlayers.includes(i);
+          return `<div class="player-row" style="padding:10px 0">
+            ${avatar(p.name, i)}
+            <div style="flex:1">
+              <div style="font-size:14px;font-weight:500">${p.name}</div>
+              <div class="pick-name">${pick || '—'}</div>
+            </div>
+            ${pick ? (isWinner ? `<span class="badge badge-ok">✓ 当確</span>`
+              : isRedoP ? `<span class="badge badge-redo">やり直し</span>` : '') : ''}
+          </div>`;
+        }).join('')}
+      </div>
+      ${rr.redoPlayers.length > 0 ? `
+        <div class="card" style="background:#faeeda;border-color:#ef9f27">
+          <div style="font-size:13px;color:#633806">
+            「${rr.redoName}」で${rr.redoPlayers.map(i => r.players[i]?.name).join('・')}が被りました → やり直しです
+          </div>
+        </div>
+        ${s.myIndex === 0
+          ? `<button class="btn btn-primary" onclick="startRedo()">やり直しを開始する</button>`
+          : '<p class="waiting">主催者がやり直しを開始するまでお待ちください…</p>'}
+        <br><button class="btn btn-sm" style="margin-top:12px" onclick="pollNext()">🔄 更新</button>`
+      : `${s.myIndex === 0
+          ? `<button class="btn btn-primary" onclick="nextRound()">${r.round >= r.max_rounds ? '最終結果を見る' : `${r.round + 1}巡目へ`}</button>`
+          : '<p class="waiting">主催者が次の巡を開始するまでお待ちください…</p>'}
+        <br><button class="btn btn-sm" style="margin-top:12px" onclick="pollNext()">🔄 更新</button>`}`;
+
+  } else if (s.screen === 'final') {
+    const r = s.room;
+    app.innerHTML = `
+      <h1 style="margin-top:32px">最終結果</h1>
+      ${r.players.map((p, i) => `
+        <div class="final-card" style="border-top:3px solid ${TEXT_COLORS[i % 4]}">
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">
+            ${avatar(p.name, i)}
+            <span style="font-weight:500">${p.name}</span>
+            <span style="margin-left:auto;font-size:13px;color:#888">${p.confirmed.length}名</span>
+          </div>
+          ${p.confirmed.length === 0
+            ? '<div style="font-size:13px;color:#888">指名なし</div>'
+            : p.confirmed.map((n, j) => `<div style="font-size:13px;padding:4px 0;border-bottom:1px solid #f0f0f0">${j + 1}. ${n}</div>`).join('')}
+        </div>`).join('')}
+      <button class="btn" style="margin-top:8px" onclick="goTop()">トップへ戻る</button>`;
+  }
+}
+
+function goTop() { clearURL(); state = { screen: 'top', room: null, myIndex: null, submitted: false, roundResult: null }; render(); }
+function goCreate() { state.screen = 'create'; render(); }
+function goJoin() { state.screen = 'join'; render(); }
+
+async function lookupRoom() {
+  const code = document.getElementById('jcode').value.trim().toUpperCase();
+  if (!code || code.length < 4) { document.getElementById('join-err').textContent = '4桁のコードを入力してください'; return; }
+  const r = await getRoom(code);
+  if (!r) { document.getElementById('join-err').textContent = 'ルームが見つかりません'; return; }
+  state.room = r;
+  state.screen = 'join_select';
+  render();
+}
+
+async function rejoinAs(index) {
+  const r = await getRoom(state.room.code);
+  state.room = r;
+  state.myIndex = index;
+  saveStateToURL(r.code, index);
+  if (r.phase === 'lobby') { state.screen = 'lobby'; }
+  else if (r.phase === 'picking') { state.screen = 'pick'; state.submitted = false; }
+  else if (r.phase === 'result') { buildResult(r); state.screen = 'result'; }
+  else if (r.phase === 'final') { state.screen = 'final'; }
+  render();
+}
+
+async function joinAsNew() {
+  const name = document.getElementById('jname').value.trim();
+  if (!name) { document.getElementById('join-err2').textContent = '名前を入力してください'; return; }
+  const r = await getRoom(state.room.code);
+  if (r.players.length >= 4) { alert('満員です'); return; }
+  if (r.phase !== 'lobby') { alert('既にゲームが始まっています'); return; }
+  const idx = r.players.length;
+  r.players.push({ name, confirmed: [] });
+  await saveRoom(r);
+  state.room = r; state.myIndex = idx; state.screen = 'lobby';
+  saveStateToURL(r.code, idx);
+  render();
+}
+
+async function createRoom() {
+  const name = document.getElementById('cname').value.trim();
+  if (!name) return;
+  const code = genCode();
+  const room = { code, round: 1, max_rounds: 20, phase: 'lobby', players: [{ name, confirmed: [] }], current_picks: {}, all_confirmed: [], redo_players: [], redo_name: null };
+  await saveRoom(room);
+  state.room = room; state.myIndex = 0; state.screen = 'lobby';
+  saveStateToURL(code, 0);
+  render();
+}
+
+async function startGame() {
+  const r = await getRoom(state.room.code);
+  if (r.players.length < 2) { alert('2名以上必要です'); return; }
+  r.phase = 'picking'; r.redo_players = []; r.redo_name = null;
+  await saveRoom(r);
+  state.room = r; state.screen = 'pick'; state.submitted = false; render();
+}
+
+async function refreshLobby() {
+  const r = await getRoom(state.room.code);
+  state.room = r;
+  if (r.phase === 'picking') { state.screen = 'pick'; state.submitted = false; }
+  render();
+}
+
+async function submitPick() {
+  const val = document.getElementById('pick').value.trim();
+  if (!val) { document.getElementById('pick-err').textContent = '名前を入力してください'; return; }
+  const r = await getRoom(state.room.code);
+  if ((r.all_confirmed || []).includes(val)) { document.getElementById('pick-err').textContent = `「${val}」は既に確定済みです`; return; }
+  const picks = r.current_picks || {};
+  picks[String(state.myIndex)] = val;
+  r.current_picks = picks;
+  const redoPlayers = r.redo_players || [];
+  const targetCount = redoPlayers.length > 0 ? redoPlayers.length : r.players.length;
+  if (Object.keys(picks).length === targetCount) { r.phase = 'result'; }
+  await saveRoom(r);
+  state.room = r; state.submitted = true;
+  if (r.phase === 'result') { buildResult(r); state.screen = 'result'; }
+  render();
+}
+
+async function pollResult() {
+  const r = await getRoom(state.room.code);
+  state.room = r;
+  if (r.phase === 'result') { buildResult(r); state.screen = 'result'; }
+  render();
+}
+
+function buildResult(r) {
+  const picks = r.current_picks || {};
+  const allPicks = Object.values(picks);
+  const nameCounts = {};
+  allPicks.forEach(p => { nameCounts[p] = (nameCounts[p] || 0) + 1; });
+  const dupName = Object.entries(nameCounts).find(([, cnt]) => cnt > 1)?.[0] || null;
+  let redoPlayers = [], winners = [];
+  if (dupName) {
+    redoPlayers = Object.entries(picks).filter(([, v]) => v === dupName).map(([k]) => parseInt(k));
+    winners = Object.entries(picks).filter(([, v]) => v !== dupName).map(([k]) => parseInt(k));
+  } else {
+    winners = Object.keys(picks).map(k => parseInt(k));
+  }
+  state.roundResult = { round: r.round, allPicks: picks, dupName, redoPlayers, redoName: dupName, winners };
+}
+
+async function startRedo() {
+  const r = await getRoom(state.room.code);
+  const rr = state.roundResult;
+  rr.winners.forEach(i => {
+    const pick = (r.current_picks || {})[String(i)];
+    if (pick && !(r.all_confirmed || []).includes(pick)) {
+      r.all_confirmed.push(pick);
+      r.players[i].confirmed = [...(r.players[i].confirmed || []), pick];
+    }
+  });
+  r.redo_players = rr.redoPlayers; r.redo_name = rr.redoName; r.current_picks = {}; r.phase = 'picking';
+  await saveRoom(r);
+  state.room = r; state.submitted = false; state.roundResult = null; state.screen = 'pick';
+  render();
+}
+
+async function nextRound() {
+  const r = await getRoom(state.room.code);
+  const picks = r.current_picks || {};
+  const rr = state.roundResult;
+  rr.winners.forEach(i => {
+    const pick = picks[String(i)];
+    if (pick && !(r.all_confirmed || []).includes(pick)) {
+      r.all_confirmed.push(pick);
+      r.players[i].confirmed = [...(r.players[i].confirmed || []), pick];
+    }
+  });
+  r.current_picks = {}; r.redo_players = []; r.redo_name = null;
+  r.round = r.round + 1;
+  r.phase = r.round > r.max_rounds ? 'final' : 'picking';
+  await saveRoom(r);
+  state.room = r; state.submitted = false; state.roundResult = null;
+  state.screen = r.phase === 'final' ? 'final' : 'pick';
+  render();
+}
+
+async function pollNext() {
+  const r = await getRoom(state.room.code);
+  state.room = r;
+  if (r.phase === 'picking') { state.submitted = false; state.roundResult = null; state.screen = 'pick'; }
+  else if (r.phase === 'result') { buildResult(r); state.screen = 'result'; }
+  else if (r.phase === 'final') { state.screen = 'final'; }
+  render();
+}
+
+async function init() {
+  const { code, myIndex } = loadStateFromURL();
+  if (code && myIndex !== null) {
+    const r = await getRoom(code);
+    if (r) {
+      state.room = r; state.myIndex = myIndex;
+      if (r.phase === 'lobby') { state.screen = 'lobby'; }
+      else if (r.phase === 'picking') { state.screen = 'pick'; state.submitted = false; }
+      else if (r.phase === 'result') { buildResult(r); state.screen = 'result'; }
+      else if (r.phase === 'final') { state.screen = 'final'; }
+    }
+  }
+  render();
+}
+
+init();
+</script>
+</body>
+</html>
