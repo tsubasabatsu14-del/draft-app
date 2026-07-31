@@ -17,7 +17,9 @@
   .btn { display: inline-block; padding: 10px 24px; border-radius: 8px; font-size: 14px; cursor: pointer; border: 1px solid #ddd; background: #fff; color: #111; margin-right: 8px; }
   .btn-primary { background: #378ADD; color: #fff; border: none; font-weight: 500; }
   .btn-sm { padding: 6px 16px; font-size: 13px; }
+  .btn-link { background: none; border: none; color: #378ADD; font-size: 13px; cursor: pointer; padding: 4px 0; text-decoration: underline; }
   .error { color: #e24b4a; font-size: 13px; margin-bottom: 8px; }
+  .success-msg { color: #0f6e56; font-size: 13px; margin-bottom: 8px; }
   .player-row { display: flex; align-items: center; gap: 10px; padding: 10px; border-bottom: 1px solid #f0f0f0; border-radius: 8px; }
   .player-row.selectable { cursor: pointer; transition: background 0.15s; }
   .player-row.selectable:hover { background: #f0f7ff; }
@@ -69,7 +71,7 @@ function clearURL() {
   window.history.replaceState({}, '', window.location.pathname);
 }
 
-let state = { screen: 'top', room: null, myIndex: null, submitted: false, roundResult: null, rejoiningIndex: null };
+let state = { screen: 'top', room: null, myIndex: null, submitted: false, roundResult: null, rejoiningIndex: null, prevScreen: null };
 
 function avatar(name, i) {
   return `<div class="avatar" style="background:${COLORS[i%4]};color:${TEXT_COLORS[i%4]}">${name[0]}</div>`;
@@ -160,6 +162,10 @@ function buildStatusHTML(r) {
     </div>`;
 }
 
+function pinChangeLink() {
+  return `<div style="margin-top:8px"><button class="btn-link" onclick="goChangePin()">🔑 PINを変更する</button></div>`;
+}
+
 function render() {
   const app = document.getElementById('app');
   const s = state;
@@ -238,6 +244,26 @@ function render() {
       </div>
       <button class="btn btn-sm" style="margin-top:4px" onclick="goJoinSelect()">← 戻る</button>`;
 
+  } else if (s.screen === 'change_pin') {
+    const r = s.room;
+    const p = r.players[s.myIndex];
+    app.innerHTML = `
+      <h1 style="margin-top:32px">PINを変更</h1>
+      <div class="card" style="margin-top:16px">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px">
+          ${avatar(p.name, s.myIndex)}
+          <span style="font-size:16px;font-weight:500">${p.name}</span>
+        </div>
+        <label>現在のPIN</label>
+        <input id="cur-pin" maxlength="4" placeholder="例: 1234" type="password" inputmode="numeric">
+        <label>新しいPIN（4桁の数字）</label>
+        <input id="new-pin" maxlength="4" placeholder="例: 5678" type="password" inputmode="numeric">
+        <div id="changepin-err" class="error"></div>
+        <div id="changepin-success" class="success-msg"></div>
+        <button class="btn btn-primary" onclick="changePin()">変更する</button>
+      </div>
+      <button class="btn btn-sm" style="margin-top:4px" onclick="backFromChangePin()">← 戻る</button>`;
+
   } else if (s.screen === 'lobby') {
     const r = s.room;
     app.innerHTML = `
@@ -258,7 +284,8 @@ function render() {
       ${s.myIndex === 0
         ? `<button class="btn btn-primary" onclick="startGame()">ゲームを開始する</button>`
         : '<p class="waiting">主催者がゲームを開始するまでお待ちください…</p>'}
-      <br><button class="btn btn-sm" style="margin-top:12px" onclick="refreshLobby()">🔄 更新</button>`;
+      <br><button class="btn btn-sm" style="margin-top:12px" onclick="refreshLobby()">🔄 更新</button>
+      ${pinChangeLink()}`;
 
   } else if (s.screen === 'pick') {
     const r = s.room;
@@ -305,7 +332,8 @@ function render() {
           <p class="waiting">やり直し中の参加者の入力を待っています…</p>
           <button class="btn btn-sm" style="margin-top:12px" onclick="pollResult()">🔄 更新</button>
         </div>`}
-      ${buildConfirmedHTML(r)}`;
+      ${buildConfirmedHTML(r)}
+      ${pinChangeLink()}`;
 
   } else if (s.screen === 'reveal_pending') {
     const r = s.room;
@@ -329,7 +357,8 @@ function render() {
             <p class="waiting">主催者が結果を公開するまでお待ちください…</p>
             <button class="btn btn-sm" style="margin-top:12px" onclick="pollReveal()">🔄 更新</button>
            </div>`}
-      ${buildConfirmedHTML(r)}`;
+      ${buildConfirmedHTML(r)}
+      ${pinChangeLink()}`;
 
   } else if (s.screen === 'result') {
     const r = s.room;
@@ -366,7 +395,8 @@ function render() {
       : `${s.myIndex === 0
           ? `<button class="btn btn-primary" onclick="nextRound()">${r.round >= r.max_rounds ? '最終結果を見る' : `${r.round + 1}巡目へ`}</button>`
           : '<p class="waiting">主催者が次の巡を開始するまでお待ちください…</p>'}
-        <br><button class="btn btn-sm" style="margin-top:12px" onclick="pollNext()">🔄 更新</button>`}`;
+        <br><button class="btn btn-sm" style="margin-top:12px" onclick="pollNext()">🔄 更新</button>`}
+      ${pinChangeLink()}`;
 
   } else if (s.screen === 'final') {
     const r = s.room;
@@ -391,10 +421,44 @@ function render() {
   }
 }
 
-function goTop() { clearURL(); state = { screen: 'top', room: null, myIndex: null, submitted: false, roundResult: null, rejoiningIndex: null }; render(); }
+function goTop() { clearURL(); state = { screen: 'top', room: null, myIndex: null, submitted: false, roundResult: null, rejoiningIndex: null, prevScreen: null }; render(); }
 function goCreate() { state.screen = 'create'; render(); }
 function goJoin() { state.screen = 'join'; render(); }
 function goJoinSelect() { state.screen = 'join_select'; render(); }
+
+function goChangePin() {
+  state.prevScreen = state.screen;
+  state.screen = 'change_pin';
+  render();
+}
+
+function backFromChangePin() {
+  state.screen = state.prevScreen || 'lobby';
+  render();
+}
+
+async function changePin() {
+  const curPin = document.getElementById('cur-pin').value.trim();
+  const newPin = document.getElementById('new-pin').value.trim();
+  const errEl = document.getElementById('changepin-err');
+  const okEl = document.getElementById('changepin-success');
+  errEl.textContent = ''; okEl.textContent = '';
+
+  if (!curPin || curPin.length !== 4) { errEl.textContent = '現在のPINを4桁で入力してください'; return; }
+  if (!newPin || newPin.length !== 4 || !/^\d{4}$/.test(newPin)) { errEl.textContent = '新しいPINは4桁の数字で入力してください'; return; }
+
+  const r = await getRoom(state.room.code);
+  const player = r.players[state.myIndex];
+  if (!player) { errEl.textContent = 'エラーが発生しました'; return; }
+  if (player.pin !== curPin) { errEl.textContent = '現在のPINが違います'; return; }
+
+  player.pin = newPin;
+  await saveRoom(r);
+  state.room = r;
+  okEl.textContent = 'PINを変更しました';
+  document.getElementById('cur-pin').value = '';
+  document.getElementById('new-pin').value = '';
+}
 
 async function lookupRoom() {
   const code = document.getElementById('jcode').value.trim().toUpperCase();
