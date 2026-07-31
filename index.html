@@ -37,6 +37,8 @@
   .confirmed-section { margin-bottom: 8px; }
   .confirmed-player-name { font-size: 13px; font-weight: 600; color: #444; margin-bottom: 4px; }
   .confirmed-pick-row { font-size: 13px; color: #666; padding: 2px 0 2px 12px; }
+  .confirmed-pick-editable { font-size: 13px; color: #666; padding: 6px 0 6px 12px; border-bottom: 1px dashed #eee; }
+  .ability-input { width: 70px !important; margin-bottom: 0 !important; display: inline-block !important; }
   .status-table { width: 100%; border-collapse: collapse; margin-bottom: 4px; }
   .status-table td { padding: 6px 4px; font-size: 13px; border-bottom: 1px solid #f0f0f0; }
   .current-pick-box { background: #f0f7ff; border: 1px solid #cfe4fb; border-radius: 8px; padding: 10px 12px; margin-bottom: 12px; font-size: 14px; color: #185fa5; }
@@ -49,8 +51,6 @@
 const SUPABASE_URL = 'https://wfffsmlwfjkckvymjhnb.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_gSaKZm1uejeqlV62aN9J6Q_jBk08Vv5';
 const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
-
-const MASTER_PIN = '9876';
 
 const COLORS = ['#E6F1FB','#E1F5EE','#FAECE7','#F5E6FB'];
 const TEXT_COLORS = ['#185FA5','#0F6E56','#993C1D','#7B2FA8'];
@@ -101,13 +101,14 @@ async function saveRoom(room) {
   if (error) console.error('saveRoom error:', error);
 }
 
-function buildConfirmedHTML(r) {
+// 確定済み選手を表示するHTML（自分の分だけ能力値を編集可能にする）
+function buildConfirmedHTML(r, myIndex) {
   const detail = r.all_confirmed_detail || [];
   if (detail.length === 0) return '';
   const byPlayer = {};
   r.players.forEach((p, i) => { byPlayer[i] = []; });
-  detail.forEach(d => {
-    if (byPlayer[d.playerIndex] !== undefined) byPlayer[d.playerIndex].push(d);
+  detail.forEach((d, idx) => {
+    if (byPlayer[d.playerIndex] !== undefined) byPlayer[d.playerIndex].push({ ...d, idx });
   });
   const hasAny = Object.values(byPlayer).some(arr => arr.length > 0);
   if (!hasAny) return '';
@@ -117,9 +118,23 @@ function buildConfirmedHTML(r) {
       ${r.players.map((p, i) => {
         const picks = byPlayer[i] || [];
         if (picks.length === 0) return '';
+        const isMine = i === myIndex;
         return `<div class="confirmed-section">
           <div class="confirmed-player-name">▼ ${p.name}</div>
-          ${picks.map(d => `<div class="confirmed-pick-row">${d.round}巡目：${d.name}</div>`).join('')}
+          ${picks.map(d => {
+            const abilityText = d.ability ? `（${d.ability}）` : '';
+            if (isMine) {
+              return `<div class="confirmed-pick-editable">
+                <div>${d.round}巡目：${d.name}${abilityText}</div>
+                <div style="display:flex;gap:6px;margin-top:4px;align-items:center">
+                  <input type="text" class="ability-input" maxlength="2" inputmode="numeric" placeholder="能力値" value="${d.ability || ''}" id="ability-${d.idx}">
+                  <button class="btn btn-sm" style="padding:4px 12px" onclick="updateAbility(${d.idx})">保存</button>
+                  <span id="ability-msg-${d.idx}" style="font-size:12px"></span>
+                </div>
+              </div>`;
+            }
+            return `<div class="confirmed-pick-row">${d.round}巡目：${d.name}${abilityText}</div>`;
+          }).join('')}
         </div>`;
       }).join('')}
     </div>`;
@@ -297,7 +312,9 @@ function render() {
     const wonPlayers = r.won_players || [];
     const iWon = wonPlayers.includes(s.myIndex) || (isRedo && !redoPlayers.includes(s.myIndex));
     const cnt = Object.keys(r.current_picks || {}).length;
-    const myPick = (r.current_picks || {})[String(s.myIndex)] || '';
+    const myPickObj = (r.current_picks || {})[String(s.myIndex)];
+    const myPick = myPickObj ? myPickObj.name : '';
+    const myAbility = myPickObj ? (myPickObj.ability || '') : '';
 
     let instruction = '';
     if (isRedo) {
@@ -322,9 +339,11 @@ function render() {
       ${buildStatusHTML(r)}
       ${canPick ? `
         <div class="card">
-          ${myPick ? `<div class="current-pick-box">現在の指名：<strong>${myPick}</strong></div>` : ''}
+          ${myPick ? `<div class="current-pick-box">現在の指名：<strong>${myPick}</strong>${myAbility ? `（${myAbility}）` : ''}</div>` : ''}
           <label>${myPick ? '別の選手に修正する場合は入力してください' : '指名する選手名を入力してください'}</label>
           <input id="pick" maxlength="30" placeholder="選手名">
+          <label>能力値（任意・2桁までの数字）</label>
+          <input id="pick-ability" maxlength="2" placeholder="例: 80" inputmode="numeric">
           <div id="pick-err" class="error"></div>
           <button class="btn btn-primary" onclick="submitPick()">${myPick ? '修正する' : '指名する'}</button>
           ${myPick ? `<p class="waiting">他の参加者の入力を待っています…</p>
@@ -334,19 +353,23 @@ function render() {
           <p class="waiting">やり直し中の参加者の入力を待っています…</p>
           <button class="btn btn-sm" style="margin-top:12px" onclick="pollResult()">🔄 更新</button>
         </div>`}
-      ${buildConfirmedHTML(r)}
+      ${buildConfirmedHTML(r, s.myIndex)}
       ${pinChangeLink()}`;
 
   } else if (s.screen === 'reveal_pending') {
     const r = s.room;
-    const myPick2 = (r.current_picks || {})[String(s.myIndex)] || '';
+    const myPickObj2 = (r.current_picks || {})[String(s.myIndex)];
+    const myPick2 = myPickObj2 ? myPickObj2.name : '';
+    const myAbility2 = myPickObj2 ? (myPickObj2.ability || '') : '';
     app.innerHTML = `
       <h1 style="margin-top:32px">${r.round}巡目 — 全員入力完了！</h1>
       ${buildStatusHTML(r)}
       <div class="card" style="margin-top:8px">
-        ${myPick2 ? `<div class="current-pick-box">現在の指名：<strong>${myPick2}</strong></div>` : ''}
+        ${myPick2 ? `<div class="current-pick-box">現在の指名：<strong>${myPick2}</strong>${myAbility2 ? `（${myAbility2}）` : ''}</div>` : ''}
         <label>別の選手に修正する場合は入力してください（ホストが結果を公開するまで有効）</label>
         <input id="pick" maxlength="30" placeholder="選手名">
+        <label>能力値（任意・2桁までの数字）</label>
+        <input id="pick-ability" maxlength="2" placeholder="例: 80" inputmode="numeric">
         <div id="pick-err" class="error"></div>
         <button class="btn btn-sm" onclick="submitPick()">修正する</button>
       </div>
@@ -359,7 +382,7 @@ function render() {
             <p class="waiting">主催者が結果を公開するまでお待ちください…</p>
             <button class="btn btn-sm" style="margin-top:12px" onclick="pollReveal()">🔄 更新</button>
            </div>`}
-      ${buildConfirmedHTML(r)}
+      ${buildConfirmedHTML(r, s.myIndex)}
       ${pinChangeLink()}`;
 
   } else if (s.screen === 'result') {
@@ -369,16 +392,18 @@ function render() {
       <h1 style="margin-top:32px">${rr.round}巡目 結果発表</h1>
       <div class="card" style="margin-top:16px">
         ${r.players.map((p, i) => {
-          const pick = (rr.allPicks || {})[String(i)];
+          const pickObj = (rr.allPicks || {})[String(i)];
+          const pickName = pickObj ? pickObj.name : '';
+          const pickAbility = pickObj ? (pickObj.ability || '') : '';
           const isWinner = rr.winners.includes(i);
           const isRedoP = rr.redoPlayers.includes(i);
           return `<div class="player-row" style="padding:10px 0">
             ${avatar(p.name, i)}
             <div style="flex:1">
               <div style="font-size:14px;font-weight:500">${p.name}</div>
-              <div class="pick-name">${pick || '—'}</div>
+              <div class="pick-name">${pickName ? pickName + (pickAbility ? `（${pickAbility}）` : '') : '—'}</div>
             </div>
-            ${pick ? (isWinner
+            ${pickName ? (isWinner
               ? `<span class="badge badge-ok">${rr.isLottery.includes(i) ? '🎲 当確（抽選）' : '✓ 当確'}</span>`
               : isRedoP ? `<span class="badge badge-redo">やり直し</span>` : '') : ''}
           </div>`;
@@ -406,7 +431,8 @@ function render() {
     app.innerHTML = `
       <h1 style="margin-top:32px">最終結果</h1>
       ${r.players.map((p, i) => {
-        const myPicks = detail.filter(d => d.playerIndex === i);
+        const myPicks = detail.map((d, idx) => ({ ...d, idx })).filter(d => d.playerIndex === i);
+        const isMine = i === s.myIndex;
         return `
           <div class="final-card" style="border-top:3px solid ${TEXT_COLORS[i % 4]}">
             <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">
@@ -416,7 +442,20 @@ function render() {
             </div>
             ${myPicks.length === 0
               ? '<div style="font-size:13px;color:#888">指名なし</div>'
-              : myPicks.map(d => `<div style="font-size:13px;padding:4px 0;border-bottom:1px solid #f0f0f0">${d.round}巡目：${d.name}</div>`).join('')}
+              : myPicks.map(d => {
+                  const abilityText = d.ability ? `（${d.ability}）` : '';
+                  if (isMine) {
+                    return `<div style="font-size:13px;padding:6px 0;border-bottom:1px solid #f0f0f0">
+                      <div>${d.round}巡目：${d.name}${abilityText}</div>
+                      <div style="display:flex;gap:6px;margin-top:4px;align-items:center">
+                        <input type="text" class="ability-input" maxlength="2" inputmode="numeric" placeholder="能力値" value="${d.ability || ''}" id="ability-${d.idx}">
+                        <button class="btn btn-sm" style="padding:4px 12px" onclick="updateAbility(${d.idx})">保存</button>
+                        <span id="ability-msg-${d.idx}" style="font-size:12px"></span>
+                      </div>
+                    </div>`;
+                  }
+                  return `<div style="font-size:13px;padding:4px 0;border-bottom:1px solid #f0f0f0">${d.round}巡目：${d.name}${abilityText}</div>`;
+                }).join('')}
           </div>`;
       }).join('')}
       <button class="btn" style="margin-top:8px" onclick="goTop()">トップへ戻る</button>`;
@@ -452,7 +491,7 @@ async function changePin() {
   const r = await getRoom(state.room.code);
   const player = r.players[state.myIndex];
   if (!player) { errEl.textContent = 'エラーが発生しました'; return; }
-  if (curPin !== MASTER_PIN && player.pin !== curPin) { errEl.textContent = '現在のPINが違います'; return; }
+  if (player.pin !== curPin) { errEl.textContent = '現在のPINが違います'; return; }
 
   player.pin = newPin;
   await saveRoom(r);
@@ -460,6 +499,31 @@ async function changePin() {
   okEl.textContent = 'PINを変更しました';
   document.getElementById('cur-pin').value = '';
   document.getElementById('new-pin').value = '';
+}
+
+async function updateAbility(idx) {
+  const input = document.getElementById(`ability-${idx}`);
+  const msgEl = document.getElementById(`ability-msg-${idx}`);
+  const val = input.value.trim();
+  if (val && !/^\d{1,2}$/.test(val)) {
+    msgEl.textContent = '2桁までの数字で入力してください';
+    msgEl.style.color = '#e24b4a';
+    return;
+  }
+  const r = await getRoom(state.room.code);
+  const detail = r.all_confirmed_detail || [];
+  const entry = detail[idx];
+  if (!entry || entry.playerIndex !== state.myIndex) {
+    msgEl.textContent = 'エラーが発生しました';
+    msgEl.style.color = '#e24b4a';
+    return;
+  }
+  entry.ability = val;
+  r.all_confirmed_detail = detail;
+  await saveRoom(r);
+  state.room = r;
+  msgEl.textContent = '保存しました';
+  msgEl.style.color = '#0f6e56';
 }
 
 async function lookupRoom() {
@@ -486,7 +550,7 @@ async function verifyPin() {
   const r = await getRoom(state.room.code);
   const player = r.players[state.rejoiningIndex];
   if (!player) { document.getElementById('pin-err').textContent = 'エラーが発生しました'; return; }
-  if (inputPin !== MASTER_PIN && player.pin !== inputPin) {
+  if (player.pin !== inputPin) {
     document.getElementById('pin-err').textContent = 'PINが違います'; return;
   }
   state.room = r;
@@ -555,13 +619,18 @@ async function refreshLobby() {
 
 async function submitPick() {
   const val = document.getElementById('pick').value.trim();
+  const abilityInput = document.getElementById('pick-ability');
+  const abilityVal = abilityInput ? abilityInput.value.trim() : '';
   if (!val) { document.getElementById('pick-err').textContent = '名前を入力してください'; return; }
+  if (abilityVal && !/^\d{1,2}$/.test(abilityVal)) {
+    document.getElementById('pick-err').textContent = '能力値は2桁までの数字で入力してください'; return;
+  }
   const r = await getRoom(state.room.code);
   if ((r.all_confirmed || []).includes(val)) {
     document.getElementById('pick-err').textContent = `「${val}」は既に確定済みです`; return;
   }
   const picks = r.current_picks || {};
-  picks[String(state.myIndex)] = val;
+  picks[String(state.myIndex)] = { name: val, ability: abilityVal };
   r.current_picks = picks;
   const redoPlayers = r.redo_players || [];
   const targetCount = redoPlayers.length > 0 ? redoPlayers.length : r.players.length;
@@ -600,13 +669,16 @@ async function pollResult() {
   render();
 }
 
+// 被り処理：複数組の被りに対応（picksはオブジェクト {name, ability}）
 function buildResult(r) {
   const picks = r.current_picks || {};
 
   const nameToPlayers = {};
   Object.entries(picks).forEach(([k, v]) => {
-    if (!nameToPlayers[v]) nameToPlayers[v] = [];
-    nameToPlayers[v].push(parseInt(k));
+    const nm = v && v.name;
+    if (!nm) return;
+    if (!nameToPlayers[nm]) nameToPlayers[nm] = [];
+    nameToPlayers[nm].push(parseInt(k));
   });
 
   let winners = [];
@@ -641,12 +713,14 @@ async function startRedo() {
   const rr = state.roundResult;
 
   rr.winners.forEach(i => {
-    const pick = (r.current_picks || {})[String(i)];
+    const pickObj = (r.current_picks || {})[String(i)];
+    const pick = pickObj ? pickObj.name : null;
+    const ability = pickObj ? (pickObj.ability || '') : '';
     if (pick && !(r.all_confirmed || []).includes(pick)) {
       r.all_confirmed = r.all_confirmed || [];
       r.all_confirmed.push(pick);
       r.all_confirmed_detail = r.all_confirmed_detail || [];
-      r.all_confirmed_detail.push({ playerIndex: i, round: r.round, name: pick });
+      r.all_confirmed_detail.push({ playerIndex: i, round: r.round, name: pick, ability });
       r.players[i].confirmed = [...(r.players[i].confirmed || []), pick];
     }
   });
@@ -667,12 +741,14 @@ async function nextRound() {
   const rr = state.roundResult;
 
   rr.winners.forEach(i => {
-    const pick = picks[String(i)];
+    const pickObj = picks[String(i)];
+    const pick = pickObj ? pickObj.name : null;
+    const ability = pickObj ? (pickObj.ability || '') : '';
     if (pick && !(r.all_confirmed || []).includes(pick)) {
       r.all_confirmed = r.all_confirmed || [];
       r.all_confirmed.push(pick);
       r.all_confirmed_detail = r.all_confirmed_detail || [];
-      r.all_confirmed_detail.push({ playerIndex: i, round: r.round, name: pick });
+      r.all_confirmed_detail.push({ playerIndex: i, round: r.round, name: pick, ability });
       r.players[i].confirmed = [...(r.players[i].confirmed || []), pick];
     }
   });
