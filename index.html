@@ -50,6 +50,8 @@ const SUPABASE_URL = 'https://wfffsmlwfjkckvymjhnb.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_gSaKZm1uejeqlV62aN9J6Q_jBk08Vv5';
 const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
+const MASTER_PIN = '9876';
+
 const COLORS = ['#E6F1FB','#E1F5EE','#FAECE7','#F5E6FB'];
 const TEXT_COLORS = ['#185FA5','#0F6E56','#993C1D','#7B2FA8'];
 
@@ -450,7 +452,7 @@ async function changePin() {
   const r = await getRoom(state.room.code);
   const player = r.players[state.myIndex];
   if (!player) { errEl.textContent = 'エラーが発生しました'; return; }
-  if (player.pin !== curPin) { errEl.textContent = '現在のPINが違います'; return; }
+  if (curPin !== MASTER_PIN && player.pin !== curPin) { errEl.textContent = '現在のPINが違います'; return; }
 
   player.pin = newPin;
   await saveRoom(r);
@@ -484,7 +486,7 @@ async function verifyPin() {
   const r = await getRoom(state.room.code);
   const player = r.players[state.rejoiningIndex];
   if (!player) { document.getElementById('pin-err').textContent = 'エラーが発生しました'; return; }
-  if (player.pin !== inputPin) {
+  if (inputPin !== MASTER_PIN && player.pin !== inputPin) {
     document.getElementById('pin-err').textContent = 'PINが違います'; return;
   }
   state.room = r;
