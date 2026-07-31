@@ -17,7 +17,7 @@
   .btn { display: inline-block; padding: 10px 24px; border-radius: 8px; font-size: 14px; cursor: pointer; border: 1px solid #ddd; background: #fff; color: #111; margin-right: 8px; }
   .btn-primary { background: #378ADD; color: #fff; border: none; font-weight: 500; }
   .btn-sm { padding: 6px 16px; font-size: 13px; }
-  .btn-link { background: none; border: none; color: #378ADD; font-size: 13px; cursor: pointer; padding: 4px 0; text-decoration: underline; }
+  .btn-link { background: none; border: none; color: #378ADD; font-size: 12px; cursor: pointer; padding: 2px 0; text-decoration: underline; }
   .error { color: #e24b4a; font-size: 13px; margin-bottom: 8px; }
   .success-msg { color: #0f6e56; font-size: 13px; margin-bottom: 8px; }
   .player-row { display: flex; align-items: center; gap: 10px; padding: 10px; border-bottom: 1px solid #f0f0f0; border-radius: 8px; }
@@ -35,10 +35,12 @@
   .waiting { font-size: 13px; color: #888; margin-top: 8px; }
   .pin-hint { font-size: 12px; color: #999; margin-top: -8px; margin-bottom: 12px; }
   .confirmed-section { margin-bottom: 8px; }
-  .confirmed-player-name { font-size: 13px; font-weight: 600; color: #444; margin-bottom: 4px; }
+  .confirmed-player-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px; }
+  .confirmed-player-name { font-size: 13px; font-weight: 600; color: #444; }
   .confirmed-pick-row { font-size: 13px; color: #666; padding: 2px 0 2px 12px; }
-  .confirmed-pick-editable { font-size: 13px; color: #666; padding: 6px 0 6px 12px; border-bottom: 1px dashed #eee; }
-  .ability-input { width: 70px !important; margin-bottom: 0 !important; display: inline-block !important; }
+  .ability-edit-row { display: flex; align-items: center; gap: 8px; padding: 10px 0; border-bottom: 1px solid #f0f0f0; }
+  .ability-edit-row:last-child { border-bottom: none; }
+  .ability-input { width: 70px !important; margin-bottom: 0 !important; }
   .status-table { width: 100%; border-collapse: collapse; margin-bottom: 4px; }
   .status-table td { padding: 6px 4px; font-size: 13px; border-bottom: 1px solid #f0f0f0; }
   .current-pick-box { background: #f0f7ff; border: 1px solid #cfe4fb; border-radius: 8px; padding: 10px 12px; margin-bottom: 12px; font-size: 14px; color: #185fa5; }
@@ -101,14 +103,14 @@ async function saveRoom(room) {
   if (error) console.error('saveRoom error:', error);
 }
 
-// 確定済み選手を表示するHTML（自分の分だけ能力値を編集可能にする）
+// 確定済み選手を表示するHTML（自分の行だけ「能力値を修正する」リンクを表示）
 function buildConfirmedHTML(r, myIndex) {
   const detail = r.all_confirmed_detail || [];
   if (detail.length === 0) return '';
   const byPlayer = {};
   r.players.forEach((p, i) => { byPlayer[i] = []; });
-  detail.forEach((d, idx) => {
-    if (byPlayer[d.playerIndex] !== undefined) byPlayer[d.playerIndex].push({ ...d, idx });
+  detail.forEach(d => {
+    if (byPlayer[d.playerIndex] !== undefined) byPlayer[d.playerIndex].push(d);
   });
   const hasAny = Object.values(byPlayer).some(arr => arr.length > 0);
   if (!hasAny) return '';
@@ -120,21 +122,11 @@ function buildConfirmedHTML(r, myIndex) {
         if (picks.length === 0) return '';
         const isMine = i === myIndex;
         return `<div class="confirmed-section">
-          <div class="confirmed-player-name">▼ ${p.name}</div>
-          ${picks.map(d => {
-            const abilityText = d.ability ? `（${d.ability}）` : '';
-            if (isMine) {
-              return `<div class="confirmed-pick-editable">
-                <div>${d.round}巡目：${d.name}${abilityText}</div>
-                <div style="display:flex;gap:6px;margin-top:4px;align-items:center">
-                  <input type="text" class="ability-input" maxlength="2" inputmode="numeric" placeholder="能力値" value="${d.ability || ''}" id="ability-${d.idx}">
-                  <button class="btn btn-sm" style="padding:4px 12px" onclick="updateAbility(${d.idx})">保存</button>
-                  <span id="ability-msg-${d.idx}" style="font-size:12px"></span>
-                </div>
-              </div>`;
-            }
-            return `<div class="confirmed-pick-row">${d.round}巡目：${d.name}${abilityText}</div>`;
-          }).join('')}
+          <div class="confirmed-player-header">
+            <div class="confirmed-player-name">▼ ${p.name}</div>
+            ${isMine ? `<button class="btn-link" onclick="goEditAbilities()">✏️ 能力値を修正する</button>` : ''}
+          </div>
+          ${picks.map(d => `<div class="confirmed-pick-row">${d.round}巡目：${d.name}${d.ability ? `（${d.ability}）` : ''}</div>`).join('')}
         </div>`;
       }).join('')}
     </div>`;
@@ -280,6 +272,27 @@ function render() {
         <button class="btn btn-primary" onclick="changePin()">変更する</button>
       </div>
       <button class="btn btn-sm" style="margin-top:4px" onclick="backFromChangePin()">← 戻る</button>`;
+
+  } else if (s.screen === 'edit_abilities') {
+    const r = s.room;
+    const detail = (r.all_confirmed_detail || []).map((d, idx) => ({ ...d, idx }));
+    const myPicks = detail.filter(d => d.playerIndex === s.myIndex);
+    app.innerHTML = `
+      <h1 style="margin-top:32px">能力値を修正</h1>
+      <p class="sub">自分の確定済み選手の能力値を編集できます</p>
+      <div class="card">
+        ${myPicks.length === 0
+          ? '<div style="font-size:13px;color:#888">確定済みの選手がありません</div>'
+          : myPicks.map(d => `
+            <div class="ability-edit-row">
+              <div style="flex:1;font-size:14px">${d.round}巡目：${d.name}</div>
+              <input type="text" class="ability-input" maxlength="2" inputmode="numeric" placeholder="能力値" value="${d.ability || ''}" id="ability-${d.idx}">
+              <button class="btn btn-sm" style="padding:6px 14px" onclick="updateAbility(${d.idx})">保存</button>
+            </div>
+            <div id="ability-msg-${d.idx}" style="font-size:12px;text-align:right;margin-bottom:4px"></div>
+          `).join('')}
+      </div>
+      <button class="btn btn-sm" onclick="backFromEditAbilities()">← 戻る</button>`;
 
   } else if (s.screen === 'lobby') {
     const r = s.room;
@@ -431,7 +444,7 @@ function render() {
     app.innerHTML = `
       <h1 style="margin-top:32px">最終結果</h1>
       ${r.players.map((p, i) => {
-        const myPicks = detail.map((d, idx) => ({ ...d, idx })).filter(d => d.playerIndex === i);
+        const myPicks = detail.filter(d => d.playerIndex === i);
         const isMine = i === s.myIndex;
         return `
           <div class="final-card" style="border-top:3px solid ${TEXT_COLORS[i % 4]}">
@@ -440,22 +453,10 @@ function render() {
               <span style="font-weight:500">${p.name}</span>
               <span style="margin-left:auto;font-size:13px;color:#888">${myPicks.length}名</span>
             </div>
+            ${isMine && myPicks.length > 0 ? `<div style="margin-bottom:8px"><button class="btn-link" onclick="goEditAbilities()">✏️ 能力値を修正する</button></div>` : ''}
             ${myPicks.length === 0
               ? '<div style="font-size:13px;color:#888">指名なし</div>'
-              : myPicks.map(d => {
-                  const abilityText = d.ability ? `（${d.ability}）` : '';
-                  if (isMine) {
-                    return `<div style="font-size:13px;padding:6px 0;border-bottom:1px solid #f0f0f0">
-                      <div>${d.round}巡目：${d.name}${abilityText}</div>
-                      <div style="display:flex;gap:6px;margin-top:4px;align-items:center">
-                        <input type="text" class="ability-input" maxlength="2" inputmode="numeric" placeholder="能力値" value="${d.ability || ''}" id="ability-${d.idx}">
-                        <button class="btn btn-sm" style="padding:4px 12px" onclick="updateAbility(${d.idx})">保存</button>
-                        <span id="ability-msg-${d.idx}" style="font-size:12px"></span>
-                      </div>
-                    </div>`;
-                  }
-                  return `<div style="font-size:13px;padding:4px 0;border-bottom:1px solid #f0f0f0">${d.round}巡目：${d.name}${abilityText}</div>`;
-                }).join('')}
+              : myPicks.map(d => `<div style="font-size:13px;padding:4px 0;border-bottom:1px solid #f0f0f0">${d.round}巡目：${d.name}${d.ability ? `（${d.ability}）` : ''}</div>`).join('')}
           </div>`;
       }).join('')}
       <button class="btn" style="margin-top:8px" onclick="goTop()">トップへ戻る</button>`;
@@ -475,6 +476,17 @@ function goChangePin() {
 
 function backFromChangePin() {
   state.screen = state.prevScreen || 'lobby';
+  render();
+}
+
+function goEditAbilities() {
+  state.prevScreen = state.screen;
+  state.screen = 'edit_abilities';
+  render();
+}
+
+function backFromEditAbilities() {
+  state.screen = state.prevScreen || 'pick';
   render();
 }
 
