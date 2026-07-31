@@ -37,6 +37,7 @@
   .confirmed-pick-row { font-size: 13px; color: #666; padding: 2px 0 2px 12px; }
   .status-table { width: 100%; border-collapse: collapse; margin-bottom: 4px; }
   .status-table td { padding: 6px 4px; font-size: 13px; border-bottom: 1px solid #f0f0f0; }
+  .current-pick-box { background: #f0f7ff; border: 1px solid #cfe4fb; border-radius: 8px; padding: 10px 12px; margin-bottom: 12px; font-size: 14px; color: #185fa5; }
   .avatar-colors { --c0: #E6F1FB; --t0: #185FA5; --c1: #E1F5EE; --t1: #0F6E56; --c2: #FAECE7; --t2: #993C1D; --c3: #F5E6FB; --t3: #7B2FA8; }
 </style>
 </head>
@@ -292,8 +293,9 @@ function render() {
       ${buildStatusHTML(r)}
       ${canPick ? `
         <div class="card">
-          <label>${myPick ? '指名を修正できます（ホストが次に進むまで）' : '指名する選手名を入力してください'}</label>
-          <input id="pick" maxlength="30" placeholder="選手名" value="${myPick}">
+          ${myPick ? `<div class="current-pick-box">現在の指名：<strong>${myPick}</strong></div>` : ''}
+          <label>${myPick ? '別の選手に修正する場合は入力してください' : '指名する選手名を入力してください'}</label>
+          <input id="pick" maxlength="30" placeholder="選手名">
           <div id="pick-err" class="error"></div>
           <button class="btn btn-primary" onclick="submitPick()">${myPick ? '修正する' : '指名する'}</button>
           ${myPick ? `<p class="waiting">他の参加者の入力を待っています…</p>
@@ -312,8 +314,9 @@ function render() {
       <h1 style="margin-top:32px">${r.round}巡目 — 全員入力完了！</h1>
       ${buildStatusHTML(r)}
       <div class="card" style="margin-top:8px">
-        <label>あなたの指名（ホストが結果を公開するまで修正できます）</label>
-        <input id="pick" maxlength="30" placeholder="選手名" value="${myPick2}">
+        ${myPick2 ? `<div class="current-pick-box">現在の指名：<strong>${myPick2}</strong></div>` : ''}
+        <label>別の選手に修正する場合は入力してください（ホストが結果を公開するまで有効）</label>
+        <input id="pick" maxlength="30" placeholder="選手名">
         <div id="pick-err" class="error"></div>
         <button class="btn btn-sm" onclick="submitPick()">修正する</button>
       </div>
