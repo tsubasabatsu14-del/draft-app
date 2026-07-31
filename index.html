@@ -50,8 +50,6 @@ const SUPABASE_URL = 'https://wfffsmlwfjkckvymjhnb.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_gSaKZm1uejeqlV62aN9J6Q_jBk08Vv5';
 const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
-const MASTER_PIN = '9876';
-
 const COLORS = ['#E6F1FB','#E1F5EE','#FAECE7','#F5E6FB'];
 const TEXT_COLORS = ['#185FA5','#0F6E56','#993C1D','#7B2FA8'];
 
@@ -76,7 +74,7 @@ function clearURL() {
 let state = { screen: 'top', room: null, myIndex: null, submitted: false, roundResult: null, rejoiningIndex: null, prevScreen: null };
 
 function avatar(name, i) {
-  return <div class="avatar" style="background:${COLORS[i%4]};color:${TEXT_COLORS[i%4]}">${name[0]}</div>;
+  return `<div class="avatar" style="background:${COLORS[i%4]};color:${TEXT_COLORS[i%4]}">${name[0]}</div>`;
 }
 
 function shuffle(arr) {
@@ -119,7 +117,7 @@ function buildConfirmedHTML(r) {
         if (picks.length === 0) return '';
         return `<div class="confirmed-section">
           <div class="confirmed-player-name">▼ ${p.name}</div>
-          ${picks.map(d => <div class="confirmed-pick-row">${d.round}巡目：${d.name}</div>).join('')}
+          ${picks.map(d => `<div class="confirmed-pick-row">${d.round}巡目：${d.name}</div>`).join('')}
         </div>`;
       }).join('')}
     </div>`;
@@ -165,7 +163,7 @@ function buildStatusHTML(r) {
 }
 
 function pinChangeLink() {
-  return <div style="margin-top:8px"><button class="btn-link" onclick="goChangePin()">🔑 PINを変更する</button></div>;
+  return `<div style="margin-top:8px"><button class="btn-link" onclick="goChangePin()">🔑 PINを変更する</button></div>`;
 }
 
 function render() {
@@ -284,7 +282,7 @@ function render() {
         <div style="margin-top:8px;font-size:13px;color:#888">${r.players.length}/4名 参加中</div>
       </div>
       ${s.myIndex === 0
-        ? <button class="btn btn-primary" onclick="startGame()">ゲームを開始する</button>
+        ? `<button class="btn btn-primary" onclick="startGame()">ゲームを開始する</button>`
         : '<p class="waiting">主催者がゲームを開始するまでお待ちください…</p>'}
       <br><button class="btn btn-sm" style="margin-top:12px" onclick="refreshLobby()">🔄 更新</button>
       ${pinChangeLink()}`;
@@ -322,7 +320,7 @@ function render() {
       ${buildStatusHTML(r)}
       ${canPick ? `
         <div class="card">
-          ${myPick ? <div class="current-pick-box">現在の指名：<strong>${myPick}</strong></div> : ''}
+          ${myPick ? `<div class="current-pick-box">現在の指名：<strong>${myPick}</strong></div>` : ''}
           <label>${myPick ? '別の選手に修正する場合は入力してください' : '指名する選手名を入力してください'}</label>
           <input id="pick" maxlength="30" placeholder="選手名">
           <div id="pick-err" class="error"></div>
@@ -344,7 +342,7 @@ function render() {
       <h1 style="margin-top:32px">${r.round}巡目 — 全員入力完了！</h1>
       ${buildStatusHTML(r)}
       <div class="card" style="margin-top:8px">
-        ${myPick2 ? <div class="current-pick-box">現在の指名：<strong>${myPick2}</strong></div> : ''}
+        ${myPick2 ? `<div class="current-pick-box">現在の指名：<strong>${myPick2}</strong></div>` : ''}
         <label>別の選手に修正する場合は入力してください（ホストが結果を公開するまで有効）</label>
         <input id="pick" maxlength="30" placeholder="選手名">
         <div id="pick-err" class="error"></div>
@@ -379,8 +377,8 @@ function render() {
               <div class="pick-name">${pick || '—'}</div>
             </div>
             ${pick ? (isWinner
-              ? <span class="badge badge-ok">${rr.isLottery.includes(i) ? '🎲 当確（抽選）' : '✓ 当確'}</span>
-              : isRedoP ? <span class="badge badge-redo">やり直し</span> : '') : ''}
+              ? `<span class="badge badge-ok">${rr.isLottery.includes(i) ? '🎲 当確（抽選）' : '✓ 当確'}</span>`
+              : isRedoP ? `<span class="badge badge-redo">やり直し</span>` : '') : ''}
           </div>`;
         }).join('')}
       </div>
@@ -391,11 +389,11 @@ function render() {
           </div>
         </div>
         ${s.myIndex === 0
-          ? <button class="btn btn-primary" onclick="startRedo()">やり直しを開始する</button>
+          ? `<button class="btn btn-primary" onclick="startRedo()">やり直しを開始する</button>`
           : '<p class="waiting">主催者がやり直しを開始するまでお待ちください…</p>'}
         <br><button class="btn btn-sm" style="margin-top:12px" onclick="pollNext()">🔄 更新</button>`
       : `${s.myIndex === 0
-          ? <button class="btn btn-primary" onclick="nextRound()">${r.round >= r.max_rounds ? '最終結果を見る' : `${r.round + 1}巡目へ`}</button>
+          ? `<button class="btn btn-primary" onclick="nextRound()">${r.round >= r.max_rounds ? '最終結果を見る' : `${r.round + 1}巡目へ`}</button>`
           : '<p class="waiting">主催者が次の巡を開始するまでお待ちください…</p>'}
         <br><button class="btn btn-sm" style="margin-top:12px" onclick="pollNext()">🔄 更新</button>`}
       ${pinChangeLink()}`;
@@ -416,7 +414,7 @@ function render() {
             </div>
             ${myPicks.length === 0
               ? '<div style="font-size:13px;color:#888">指名なし</div>'
-              : myPicks.map(d => <div style="font-size:13px;padding:4px 0;border-bottom:1px solid #f0f0f0">${d.round}巡目：${d.name}</div>).join('')}
+              : myPicks.map(d => `<div style="font-size:13px;padding:4px 0;border-bottom:1px solid #f0f0f0">${d.round}巡目：${d.name}</div>`).join('')}
           </div>`;
       }).join('')}
       <button class="btn" style="margin-top:8px" onclick="goTop()">トップへ戻る</button>`;
@@ -452,7 +450,7 @@ async function changePin() {
   const r = await getRoom(state.room.code);
   const player = r.players[state.myIndex];
   if (!player) { errEl.textContent = 'エラーが発生しました'; return; }
-  if (curPin !== MASTER_PIN && player.pin !== curPin) { errEl.textContent = '現在のPINが違います'; return; }
+  if (player.pin !== curPin) { errEl.textContent = '現在のPINが違います'; return; }
 
   player.pin = newPin;
   await saveRoom(r);
@@ -486,7 +484,7 @@ async function verifyPin() {
   const r = await getRoom(state.room.code);
   const player = r.players[state.rejoiningIndex];
   if (!player) { document.getElementById('pin-err').textContent = 'エラーが発生しました'; return; }
-  if (inputPin !== MASTER_PIN && player.pin !== inputPin) {
+  if (player.pin !== inputPin) {
     document.getElementById('pin-err').textContent = 'PINが違います'; return;
   }
   state.room = r;
@@ -558,7 +556,7 @@ async function submitPick() {
   if (!val) { document.getElementById('pick-err').textContent = '名前を入力してください'; return; }
   const r = await getRoom(state.room.code);
   if ((r.all_confirmed || []).includes(val)) {
-    document.getElementById('pick-err').textContent = 「${val}」は既に確定済みです; return;
+    document.getElementById('pick-err').textContent = `「${val}」は既に確定済みです`; return;
   }
   const picks = r.current_picks || {};
   picks[String(state.myIndex)] = val;
