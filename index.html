@@ -38,9 +38,10 @@
   .confirmed-player-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px; }
   .confirmed-player-name { font-size: 13px; font-weight: 600; color: #444; }
   .confirmed-pick-row { font-size: 13px; color: #666; padding: 2px 0 2px 12px; }
-  .ability-edit-row { display: flex; align-items: center; gap: 8px; padding: 10px 0; border-bottom: 1px solid #f0f0f0; }
-  .ability-edit-row:last-child { border-bottom: none; }
-  .ability-input { width: 70px !important; margin-bottom: 0 !important; }
+  .detail-edit-row { padding: 10px 0; border-bottom: 1px solid #f0f0f0; }
+  .detail-edit-row:last-child { border-bottom: none; }
+  .detail-edit-inputs { display: flex; gap: 8px; margin-top: 6px; align-items: center; flex-wrap: wrap; }
+  .detail-input { width: 90px !important; margin-bottom: 0 !important; }
   .status-table { width: 100%; border-collapse: collapse; margin-bottom: 4px; }
   .status-table td { padding: 6px 4px; font-size: 13px; border-bottom: 1px solid #f0f0f0; }
   .current-pick-box { background: #f0f7ff; border: 1px solid #cfe4fb; border-radius: 8px; padding: 10px 12px; margin-bottom: 12px; font-size: 14px; color: #185fa5; }
@@ -94,6 +95,15 @@ function shuffle(arr) {
 
 function genCode() { return Math.random().toString(36).substring(2,6).toUpperCase(); }
 
+// 能力値・所属の表示テキストを組み立てる（両方あれば「,」区切り、片方だけならそれのみ、両方空なら空文字）
+function formatExtra(ability, affiliation) {
+  const parts = [];
+  if (ability) parts.push(ability);
+  if (affiliation) parts.push(affiliation);
+  if (parts.length === 0) return '';
+  return `（${parts.join(',')}）`;
+}
+
 async function getRoom(code) {
   const { data, error } = await sb.from('rooms').select('*').eq('code', code).single();
   if (error) { console.error('getRoom error:', error); return null; }
@@ -105,7 +115,7 @@ async function saveRoom(room) {
   if (error) console.error('saveRoom error:', error);
 }
 
-// 確定済み選手を表示するHTML（自分の行だけ「能力値を修正する」リンクを表示）
+// 確定済み選手を表示するHTML（自分の行だけ「詳細情報を修正する」リンクを表示）
 function buildConfirmedHTML(r, myIndex) {
   const detail = r.all_confirmed_detail || [];
   if (detail.length === 0) return '';
@@ -126,9 +136,9 @@ function buildConfirmedHTML(r, myIndex) {
         return `<div class="confirmed-section">
           <div class="confirmed-player-header">
             <div class="confirmed-player-name">▼ ${p.name}</div>
-            ${isMine ? `<button class="btn-link" onclick="goEditAbilities()">✏️ 能力値を修正する</button>` : ''}
+            ${isMine ? `<button class="btn-link" onclick="goEditAbilities()">✏️ 詳細情報を修正する</button>` : ''}
           </div>
-          ${picks.map(d => `<div class="confirmed-pick-row">${d.round}巡目：${d.name}${d.ability ? `（${d.ability}）` : ''}</div>`).join('')}
+          ${picks.map(d => `<div class="confirmed-pick-row">${d.round}巡目：${d.name}${formatExtra(d.ability, d.affiliation)}</div>`).join('')}
         </div>`;
       }).join('')}
     </div>`;
@@ -280,18 +290,21 @@ function render() {
     const detail = (r.all_confirmed_detail || []).map((d, idx) => ({ ...d, idx }));
     const myPicks = detail.filter(d => d.playerIndex === s.myIndex);
     app.innerHTML = `
-      <h1 style="margin-top:32px">能力値を修正</h1>
-      <p class="sub">自分の確定済み選手の能力値を編集できます</p>
+      <h1 style="margin-top:32px">詳細情報を修正</h1>
+      <p class="sub">自分の確定済み選手の能力値・所属を編集できます（どちらも任意）</p>
       <div class="card">
         ${myPicks.length === 0
           ? '<div style="font-size:13px;color:#888">確定済みの選手がありません</div>'
           : myPicks.map(d => `
-            <div class="ability-edit-row">
-              <div style="flex:1;font-size:14px">${d.round}巡目：${d.name}</div>
-              <input type="text" class="ability-input" maxlength="2" inputmode="numeric" placeholder="能力値" value="${d.ability || ''}" id="ability-${d.idx}">
-              <button class="btn btn-sm" style="padding:6px 14px" onclick="updateAbility(${d.idx})">保存</button>
+            <div class="detail-edit-row">
+              <div style="font-size:14px">${d.round}巡目：${d.name}</div>
+              <div class="detail-edit-inputs">
+                <input type="text" class="detail-input" maxlength="2" inputmode="numeric" placeholder="能力値" value="${d.ability || ''}" id="ability-${d.idx}">
+                <input type="text" class="detail-input" maxlength="20" placeholder="所属" value="${d.affiliation || ''}" id="affiliation-${d.idx}">
+                <button class="btn btn-sm" style="padding:6px 14px" onclick="updateDetail(${d.idx})">保存</button>
+              </div>
+              <div id="detail-msg-${d.idx}" style="font-size:12px;text-align:right;margin-top:4px"></div>
             </div>
-            <div id="ability-msg-${d.idx}" style="font-size:12px;text-align:right;margin-bottom:4px"></div>
           `).join('')}
       </div>
       <button class="btn btn-sm" onclick="backFromEditAbilities()">← 戻る</button>`;
@@ -330,6 +343,7 @@ function render() {
     const myPickObj = (r.current_picks || {})[String(s.myIndex)];
     const myPick = myPickObj ? myPickObj.name : '';
     const myAbility = myPickObj ? (myPickObj.ability || '') : '';
+    const myAffiliation = myPickObj ? (myPickObj.affiliation || '') : '';
 
     let instruction = '';
     if (isRedo) {
@@ -354,11 +368,13 @@ function render() {
       ${buildStatusHTML(r)}
       ${canPick ? `
         <div class="card">
-          ${myPick ? `<div class="current-pick-box">現在の指名：<strong>${myPick}</strong>${myAbility ? `（${myAbility}）` : ''}</div>` : ''}
+          ${myPick ? `<div class="current-pick-box">現在の指名：<strong>${myPick}</strong>${formatExtra(myAbility, myAffiliation)}</div>` : ''}
           <label>${myPick ? '別の選手に修正する場合は入力してください' : '指名する選手名を入力してください'}</label>
           <input id="pick" maxlength="30" placeholder="選手名">
           <label>能力値（任意・2桁までの数字）</label>
           <input id="pick-ability" maxlength="2" placeholder="例: 80" inputmode="numeric">
+          <label>所属（任意）</label>
+          <input id="pick-affiliation" maxlength="20" placeholder="例: フランス">
           <div id="pick-err" class="error"></div>
           <button class="btn btn-primary" onclick="submitPick()">${myPick ? '修正する' : '指名する'}</button>
           ${myPick ? `<p class="waiting">他の参加者の入力を待っています…</p>
@@ -376,15 +392,18 @@ function render() {
     const myPickObj2 = (r.current_picks || {})[String(s.myIndex)];
     const myPick2 = myPickObj2 ? myPickObj2.name : '';
     const myAbility2 = myPickObj2 ? (myPickObj2.ability || '') : '';
+    const myAffiliation2 = myPickObj2 ? (myPickObj2.affiliation || '') : '';
     app.innerHTML = `
       <h1 style="margin-top:32px">${r.round}巡目 — 全員入力完了！</h1>
       ${buildStatusHTML(r)}
       <div class="card" style="margin-top:8px">
-        ${myPick2 ? `<div class="current-pick-box">現在の指名：<strong>${myPick2}</strong>${myAbility2 ? `（${myAbility2}）` : ''}</div>` : ''}
+        ${myPick2 ? `<div class="current-pick-box">現在の指名：<strong>${myPick2}</strong>${formatExtra(myAbility2, myAffiliation2)}</div>` : ''}
         <label>別の選手に修正する場合は入力してください（ホストが結果を公開するまで有効）</label>
         <input id="pick" maxlength="30" placeholder="選手名">
         <label>能力値（任意・2桁までの数字）</label>
         <input id="pick-ability" maxlength="2" placeholder="例: 80" inputmode="numeric">
+        <label>所属（任意）</label>
+        <input id="pick-affiliation" maxlength="20" placeholder="例: フランス">
         <div id="pick-err" class="error"></div>
         <button class="btn btn-sm" onclick="submitPick()">修正する</button>
       </div>
@@ -410,13 +429,14 @@ function render() {
           const pickObj = (rr.allPicks || {})[String(i)];
           const pickName = pickObj ? pickObj.name : '';
           const pickAbility = pickObj ? (pickObj.ability || '') : '';
+          const pickAffiliation = pickObj ? (pickObj.affiliation || '') : '';
           const isWinner = rr.winners.includes(i);
           const isRedoP = rr.redoPlayers.includes(i);
           return `<div class="player-row" style="padding:10px 0">
             ${avatar(p.name, i)}
             <div style="flex:1">
               <div style="font-size:14px;font-weight:500">${p.name}</div>
-              <div class="pick-name">${pickName ? pickName + (pickAbility ? `（${pickAbility}）` : '') : '—'}</div>
+              <div class="pick-name">${pickName ? pickName + formatExtra(pickAbility, pickAffiliation) : '—'}</div>
             </div>
             ${pickName ? (isWinner
               ? `<span class="badge badge-ok">${rr.isLottery.includes(i) ? '🎲 当確（抽選）' : '✓ 当確'}</span>`
@@ -455,10 +475,10 @@ function render() {
               <span style="font-weight:500">${p.name}</span>
               <span style="margin-left:auto;font-size:13px;color:#888">${myPicks.length}名</span>
             </div>
-            ${isMine && myPicks.length > 0 ? `<div style="margin-bottom:8px"><button class="btn-link" onclick="goEditAbilities()">✏️ 能力値を修正する</button></div>` : ''}
+            ${isMine && myPicks.length > 0 ? `<div style="margin-bottom:8px"><button class="btn-link" onclick="goEditAbilities()">✏️ 詳細情報を修正する</button></div>` : ''}
             ${myPicks.length === 0
               ? '<div style="font-size:13px;color:#888">指名なし</div>'
-              : myPicks.map(d => `<div style="font-size:13px;padding:4px 0;border-bottom:1px solid #f0f0f0">${d.round}巡目：${d.name}${d.ability ? `（${d.ability}）` : ''}</div>`).join('')}
+              : myPicks.map(d => `<div style="font-size:13px;padding:4px 0;border-bottom:1px solid #f0f0f0">${d.round}巡目：${d.name}${formatExtra(d.ability, d.affiliation)}</div>`).join('')}
           </div>`;
       }).join('')}
       <button class="btn" style="margin-top:8px" onclick="goTop()">トップへ戻る</button>`;
@@ -515,15 +535,19 @@ async function changePin() {
   document.getElementById('new-pin').value = '';
 }
 
-async function updateAbility(idx) {
-  const input = document.getElementById(`ability-${idx}`);
-  const msgEl = document.getElementById(`ability-msg-${idx}`);
-  const val = input.value.trim();
-  if (val && !/^\d{1,2}$/.test(val)) {
-    msgEl.textContent = '2桁までの数字で入力してください';
+async function updateDetail(idx) {
+  const abilityInput = document.getElementById(`ability-${idx}`);
+  const affiliationInput = document.getElementById(`affiliation-${idx}`);
+  const msgEl = document.getElementById(`detail-msg-${idx}`);
+  const abilityVal = abilityInput.value.trim();
+  const affiliationVal = affiliationInput.value.trim();
+
+  if (abilityVal && !/^\d{1,2}$/.test(abilityVal)) {
+    msgEl.textContent = '能力値は2桁までの数字で入力してください';
     msgEl.style.color = '#e24b4a';
     return;
   }
+
   const r = await getRoom(state.room.code);
   const detail = r.all_confirmed_detail || [];
   const entry = detail[idx];
@@ -532,7 +556,8 @@ async function updateAbility(idx) {
     msgEl.style.color = '#e24b4a';
     return;
   }
-  entry.ability = val;
+  entry.ability = abilityVal;
+  entry.affiliation = affiliationVal;
   r.all_confirmed_detail = detail;
   await saveRoom(r);
   state.room = r;
@@ -634,7 +659,9 @@ async function refreshLobby() {
 async function submitPick() {
   const val = document.getElementById('pick').value.trim();
   const abilityInput = document.getElementById('pick-ability');
+  const affiliationInput = document.getElementById('pick-affiliation');
   const abilityVal = abilityInput ? abilityInput.value.trim() : '';
+  const affiliationVal = affiliationInput ? affiliationInput.value.trim() : '';
   if (!val) { document.getElementById('pick-err').textContent = '名前を入力してください'; return; }
   if (abilityVal && !/^\d{1,2}$/.test(abilityVal)) {
     document.getElementById('pick-err').textContent = '能力値は2桁までの数字で入力してください'; return;
@@ -644,7 +671,7 @@ async function submitPick() {
     document.getElementById('pick-err').textContent = `「${val}」は既に確定済みです`; return;
   }
   const picks = r.current_picks || {};
-  picks[String(state.myIndex)] = { name: val, ability: abilityVal };
+  picks[String(state.myIndex)] = { name: val, ability: abilityVal, affiliation: affiliationVal };
   r.current_picks = picks;
   const redoPlayers = r.redo_players || [];
   const targetCount = redoPlayers.length > 0 ? redoPlayers.length : r.players.length;
@@ -683,7 +710,7 @@ async function pollResult() {
   render();
 }
 
-// 被り処理：複数組の被りに対応（picksはオブジェクト {name, ability}）
+// 被り処理：複数組の被りに対応（picksはオブジェクト {name, ability, affiliation}、被り判定は名前のみ）
 function buildResult(r) {
   const picks = r.current_picks || {};
 
@@ -730,11 +757,12 @@ async function startRedo() {
     const pickObj = (r.current_picks || {})[String(i)];
     const pick = pickObj ? pickObj.name : null;
     const ability = pickObj ? (pickObj.ability || '') : '';
+    const affiliation = pickObj ? (pickObj.affiliation || '') : '';
     if (pick && !(r.all_confirmed || []).includes(pick)) {
       r.all_confirmed = r.all_confirmed || [];
       r.all_confirmed.push(pick);
       r.all_confirmed_detail = r.all_confirmed_detail || [];
-      r.all_confirmed_detail.push({ playerIndex: i, round: r.round, name: pick, ability });
+      r.all_confirmed_detail.push({ playerIndex: i, round: r.round, name: pick, ability, affiliation });
       r.players[i].confirmed = [...(r.players[i].confirmed || []), pick];
     }
   });
@@ -758,11 +786,12 @@ async function nextRound() {
     const pickObj = picks[String(i)];
     const pick = pickObj ? pickObj.name : null;
     const ability = pickObj ? (pickObj.ability || '') : '';
+    const affiliation = pickObj ? (pickObj.affiliation || '') : '';
     if (pick && !(r.all_confirmed || []).includes(pick)) {
       r.all_confirmed = r.all_confirmed || [];
       r.all_confirmed.push(pick);
       r.all_confirmed_detail = r.all_confirmed_detail || [];
-      r.all_confirmed_detail.push({ playerIndex: i, round: r.round, name: pick, ability });
+      r.all_confirmed_detail.push({ playerIndex: i, round: r.round, name: pick, ability, affiliation });
       r.players[i].confirmed = [...(r.players[i].confirmed || []), pick];
     }
   });
